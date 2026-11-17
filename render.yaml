@@ -33,3 +33,9 @@ services:
         sync: false
       - key: CORS_ORIGIN # ex.: https://conectadoacoes.vercel.app
         sync: false
+      - key: RESEND_API_KEY # recuperação de senha; obrigatória em produção
+        sync: false
+      - key: EMAIL_FROM # remetente de um domínio verificado no Resend
+        sync: false
+      - key: APP_URL # frontend; link do e-mail de redefinição
+        sync: false

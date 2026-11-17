@@ -49,6 +49,9 @@ Todas são lidas e validadas uma única vez em [src/core/env.ts](src/core/env.ts
 | `LOG_LEVEL` | não | `info` | |
 | `TRUST_PROXY` | não | `false` | `true` atrás do proxy do Render/Railway, para o rate limit ver o IP real |
 | `SWAGGER_ENABLED` | não | `false` | `/docs`; deixe desligado em produção |
+| `RESEND_API_KEY` | em produção | `re_...` | Envio do e-mail de recuperação de senha. Sem ela (só fora de produção), o e-mail com o link sai no log |
+| `EMAIL_FROM` | não | `Conecta Doações <nao-responda@seudominio.com.br>` | Remetente; precisa ser de um domínio verificado no Resend. O padrão `onboarding@resend.dev` só entrega para o e-mail dono da conta Resend |
+| `APP_URL` | não | `https://conectadoacoes.vercel.app` | Frontend; o link do e-mail é `APP_URL/redefinir-senha?token=…` (padrão `http://localhost:5173`) |
 | `STORAGE_BUCKET_ITEMS` / `STORAGE_BUCKET_DOCS` | não | `items` / `ngo-docs` | |
 | `RATE_LIMIT_MAX` / `AUTH_RATE_LIMIT_MAX` | não | `120` / `10` | Por minuto: global por IP / `/auth/*` por IP |
 | `ITEMS_RATE_LIMIT_MAX` / `MESSAGES_RATE_LIMIT_MAX` | não | `10` / `30` | Por minuto e por usuário: `POST /items` / envio de mensagem |

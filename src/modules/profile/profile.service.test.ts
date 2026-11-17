@@ -29,7 +29,6 @@ function setup(repo: Partial<ProfileRepository> = {}) {
   const profileRepo = {
     updateUser: vi.fn(async () => {}),
     updateWebsite: vi.fn(async () => {}),
-    setPassword: vi.fn(async () => {}),
     replaceDocumentUnlessActive: vi.fn(async () => ({ replaced: true as const, oldPath: 'n1/old.pdf' })),
     hasActiveNegotiations: vi.fn(async () => false),
     deleteAvailableItemsOfDonor: vi.fn(async () => ['https://storage.test/items/i1/a.webp']),
@@ -38,14 +37,9 @@ function setup(repo: Partial<ProfileRepository> = {}) {
     anonymize: vi.fn(async () => {}),
     ...repo,
   } as unknown as ProfileRepository & Record<string, ReturnType<typeof vi.fn>>;
-  const service = createProfileService({
-    db: fakeDb(),
-    profileRepo,
-    authRepo: { findById: async () => self },
-    storage,
-    hasher,
-  });
-  return { service, storage, profileRepo };
+  const authRepo = { findById: async () => self, setPassword: vi.fn(async () => {}) };
+  const service = createProfileService({ db: fakeDb(), profileRepo, authRepo, storage, hasher });
+  return { service, storage, profileRepo, authRepo };
 }
 
 describe('profileService.update', () => {
@@ -77,9 +71,9 @@ describe('profileService.changePassword', () => {
   });
 
   it('grava o hash novo', async () => {
-    const { service, profileRepo } = setup();
+    const { service, authRepo } = setup();
     await service.changePassword(DONOR, 'Senha1234', 'Nova12345');
-    expect(profileRepo.setPassword).toHaveBeenCalledWith(expect.anything(), 'd1', 'h:Nova12345');
+    expect(authRepo.setPassword).toHaveBeenCalledWith(expect.anything(), 'd1', 'h:Nova12345');
   });
 });
 

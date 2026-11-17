@@ -11,7 +11,7 @@ import type { ProfileRepository } from './profile.repository';
 export interface ProfileDeps {
   db: Pick<Db, 'sql' | 'tx'>;
   profileRepo: ProfileRepository;
-  authRepo: Pick<AuthRepository, 'findById'>;
+  authRepo: Pick<AuthRepository, 'findById' | 'setPassword'>;
   storage: Storage;
   hasher: PasswordHasher;
 }
@@ -53,7 +53,7 @@ export const createProfileService = ({ db, profileRepo, authRepo, storage, hashe
       const self = await loadSelf(user.id);
       await checkPassword(self, current);
       if (await hasher.compare(next, self.password_hash)) throw new AppError('SAME_PASSWORD');
-      await profileRepo.setPassword(db.sql, user.id, await hasher.hash(next));
+      await authRepo.setPassword(db.sql, user.id, await hasher.hash(next));
     },
 
     /** ONG pendente ou rejeitada reenvia o documento e volta para a fila de análise. */

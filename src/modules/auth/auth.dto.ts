@@ -56,6 +56,15 @@ export const LoginBody = z.object({
 });
 export type LoginBody = z.infer<typeof LoginBody>;
 
+export const ForgotPasswordBody = z.object({ email: Email });
+export type ForgotPasswordBody = z.infer<typeof ForgotPasswordBody>;
+
+export const ResetPasswordBody = z.object({
+  token: z.string().trim().min(1).max(200),
+  new_password: Password,
+});
+export type ResetPasswordBody = z.infer<typeof ResetPasswordBody>;
+
 // ── Saída ──
 export const NgoProfileDto = z
   .object({

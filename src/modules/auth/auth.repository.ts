@@ -58,6 +58,13 @@ export const authRepository = {
     return row!;
   },
 
+  /** Grava a senha nova e marca a troca: tokens JWT emitidos antes passam a ser recusados. */
+  async setPassword(q: Queryable, userId: string, passwordHash: string): Promise<void> {
+    await q`
+      UPDATE users SET password_hash = ${passwordHash}, password_changed_at = NOW(), updated_at = NOW()
+      WHERE id = ${userId}`;
+  },
+
   async insertNgoProfile(
     q: Queryable,
     p: { user_id: string; cnpj: string; website: string | null; document_url: string },

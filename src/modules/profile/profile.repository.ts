@@ -16,12 +16,6 @@ export const profileRepository = {
   },
 
   /** Grava o novo hash e marca a troca: tokens emitidos antes passam a ser recusados. */
-  async setPassword(q: Queryable, userId: string, passwordHash: string): Promise<void> {
-    await q`
-      UPDATE users SET password_hash = ${passwordHash}, password_changed_at = NOW(), updated_at = NOW()
-      WHERE id = ${userId}`;
-  },
-
   /**
    * Troca o documento e devolve a ONG para análise, exceto se ela já estiver ATIVO.
    * Precisa de transação: trava o perfil, lê o caminho antigo e atualiza.
@@ -81,6 +75,8 @@ export const profileRepository = {
         deleted_at = NOW(),
         updated_at = NOW()
       WHERE id = ${userId}`;
+    // Links de redefinição pendentes deixam de valer.
+    await q`DELETE FROM password_resets WHERE user_id = ${userId}`;
   },
 };
 

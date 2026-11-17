@@ -13,6 +13,7 @@ import pkg from '../package.json' with { type: 'json' };
 import './core/dto'; // mensagens de validação do Zod em PT-BR
 import { authPlugin } from './core/auth';
 import { createDb, type Db } from './core/db';
+import { createLogMailer, createResendMailer, type Mailer } from './core/email';
 import { env, isProd } from './core/env';
 import { AppError } from './core/errors';
 import { errorPlugin } from './core/errors/handler';
@@ -32,6 +33,8 @@ import { createAuthController } from './modules/auth/auth.controller';
 import { authRepository } from './modules/auth/auth.repository';
 import { authRoutes } from './modules/auth/auth.routes';
 import { createAuthService } from './modules/auth/auth.service';
+import { createPasswordResetService } from './modules/auth/password-reset.service';
+import { passwordResetsRepository } from './modules/auth/password-resets.repository';
 import { createInterestsController } from './modules/interests/interests.controller';
 import { interestsRepository } from './modules/interests/interests.repository';
 import { interestsRoutes } from './modules/interests/interests.routes';
@@ -56,6 +59,8 @@ export interface BuildAppOptions {
   logger?: boolean;
   /** Barramento de eventos do chat; por padrão, em memória (1 instância). */
   bus?: RealtimeBus;
+  /** Envio de e-mail; por padrão Resend (com RESEND_API_KEY) ou log. Fake nos testes. */
+  mailer?: Mailer;
   /** Recebe cada rota registrada (usado pelo teste que exige 401 em toda rota não pública). */
   onRoute?: (route: RouteOptions) => void;
 }
@@ -71,7 +76,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
         ? false
         : {
             level: env.LOG_LEVEL,
-            redact: ['req.headers.authorization', 'req.body.password'],
+            redact: ['req.headers.authorization', 'req.body.password', 'req.body.new_password', 'req.body.token'],
           },
     trustProxy: env.TRUST_PROXY,
     bodyLimit: env.BODY_LIMIT_MB * 1024 * 1024,
@@ -137,6 +142,12 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   // ── Rotas ──
   healthRoutes(app, createHealthController({ version: pkg.version, pingDb: (ms) => db.ping(ms) }));
 
+  const mailer =
+    opts.mailer ??
+    (env.RESEND_API_KEY
+      ? createResendMailer({ apiKey: env.RESEND_API_KEY, from: env.EMAIL_FROM })
+      : createLogMailer(app.log));
+
   // Injeção de dependência sem container: repositories → services → controllers.
   const services = {
     auth: createAuthService({
@@ -145,6 +156,15 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       storage,
       hasher: bcryptHasher,
       signToken: (payload) => app.jwt.sign(payload),
+    }),
+    passwordReset: createPasswordResetService({
+      db,
+      authRepo: authRepository,
+      resetsRepo: passwordResetsRepository,
+      hasher: bcryptHasher,
+      mailer,
+      appUrl: env.APP_URL,
+      onEmailError: (err) => app.log.error({ err }, 'Falha ao enviar e-mail de redefinição de senha'),
     }),
     admin: createAdminService({ db, adminRepo: adminRepository, storage }),
     items: createItemsService({ db, itemsRepo: itemsRepository, eventsRepo: itemEventsRepository, storage }),
@@ -171,7 +191,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   };
   const maxFileBytes = env.UPLOAD_MAX_FILE_MB * 1024 * 1024;
   const controllers = {
-    auth: createAuthController(services.auth, { maxFileBytes }),
+    auth: createAuthController(services.auth, { maxFileBytes, passwordReset: services.passwordReset }),
     admin: createAdminController(services.admin),
     items: createItemsController(services.items, { maxFileBytes }),
     interests: createInterestsController(services.interests),

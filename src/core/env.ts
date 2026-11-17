@@ -31,6 +31,16 @@ const Env = z.object({
   BODY_LIMIT_MB: z.coerce.number().default(1),
   UPLOAD_MAX_FILE_MB: z.coerce.number().default(5),
   SWAGGER_ENABLED: bool.default(false),
+  // ── E-mail (recuperação de senha) ──
+  // Sem chave, o e-mail sai no log em vez de ser enviado (só fora de produção).
+  RESEND_API_KEY: z.preprocess((v) => (v === '' ? undefined : v), z.string().startsWith('re_').optional()),
+  EMAIL_FROM: z.string().min(3).default('Conecta Doações <onboarding@resend.dev>'),
+  // Frontend: o link do e-mail aponta para APP_URL/redefinir-senha?token=…
+  APP_URL: z.url().default('http://localhost:5173'),
+}).superRefine((e, ctx) => {
+  if (e.NODE_ENV === 'production' && !e.RESEND_API_KEY) {
+    ctx.addIssue({ code: 'custom', path: ['RESEND_API_KEY'], message: 'Obrigatória em produção (recuperação de senha)' });
+  }
 });
 
 const parsed = Env.safeParse(process.env);

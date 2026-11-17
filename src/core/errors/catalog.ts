@@ -5,6 +5,7 @@ export const ERRORS = {
   INVALID_PHOTO: { status: 400, message: 'Envie fotos em JPG, PNG ou WEBP de até 5 MB.' },
   INVALID_CURRENT_PASSWORD: { status: 400, message: 'Senha atual incorreta.' },
   SAME_PASSWORD: { status: 400, message: 'A nova senha precisa ser diferente da atual.' },
+  INVALID_RESET_TOKEN: { status: 400, message: 'Link de redefinição inválido ou expirado. Peça um novo.' },
   INVALID_DOCUMENT: { status: 400, message: 'Envie 1 documento em PDF, JPG, PNG ou WEBP de até 5 MB.' },
   UNAUTHORIZED: { status: 401, message: 'Faça login para continuar.' },
   INVALID_CREDENTIALS: { status: 401, message: 'E-mail ou senha incorretos.' },
