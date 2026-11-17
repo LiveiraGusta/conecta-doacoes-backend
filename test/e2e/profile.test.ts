@@ -11,6 +11,8 @@ import {
   createNgo,
   PASSWORD,
   pdfBuffer,
+  sessionCookie,
+  tokenFromResponse,
 } from '../helpers/factories';
 import { multipart } from '../helpers/multipart';
 
@@ -34,7 +36,7 @@ describe('V1.1 — Perfil', () => {
     ctx.app.inject({
       method,
       url: `/api/v1${url}`,
-      headers: typeof auth === 'string' ? { authorization: `Bearer ${auth}` } : authHeader(ctx.app, auth),
+      headers: typeof auth === 'string' ? { cookie: sessionCookie(auth) } : authHeader(ctx.app, auth),
       payload,
     });
 
@@ -78,19 +80,25 @@ describe('V1.1 — Perfil', () => {
   });
 
   describe('PATCH /profile/password', () => {
-    it('troca a senha, derruba tokens antigos e o login novo funciona', async () => {
-      const old = (await login(donor.email, PASSWORD)).json().token;
+    it('troca a senha, derruba as outras sessões e reemite o cookie desta', async () => {
+      const old = tokenFromResponse(await login(donor.email, PASSWORD));
+      const otherDevice = tokenFromResponse(await login(donor.email, PASSWORD));
       await new Promise((r) => setTimeout(r, 1100)); // tokens antigos: emitidos num segundo anterior à troca
 
       const res = await call('PATCH', '/profile/password', old, { current_password: PASSWORD, new_password: 'NovaSenha9' });
       expect(res.statusCode).toBe(204);
       await expectContract(res, 'PATCH', '/profile/password');
 
+      // A sessão atual continua com o cookie novo; o token antigo e o do outro aparelho caem.
+      const renewed = tokenFromResponse(res);
+      expect(renewed).not.toBe(old);
+      expect((await call('GET', '/auth/me', renewed)).statusCode).toBe(200);
       expect((await call('GET', '/auth/me', old)).statusCode).toBe(401);
+      expect((await call('GET', '/auth/me', otherDevice)).statusCode).toBe(401);
       expect((await login(donor.email, PASSWORD)).statusCode).toBe(401);
       const fresh = await login(donor.email, 'NovaSenha9');
       expect(fresh.statusCode).toBe(200);
-      expect((await call('GET', '/auth/me', fresh.json().token)).statusCode).toBe(200);
+      expect((await call('GET', '/auth/me', tokenFromResponse(fresh))).statusCode).toBe(200);
     });
 
     it('400 INVALID_CURRENT_PASSWORD, SAME_PASSWORD e senha nova fora da regra', async () => {
@@ -160,10 +168,11 @@ describe('V1.1 — Perfil', () => {
       const disponivel = await createItem(ctx.db, donor);
       const doado = await createItem(ctx.db, donor, { status: 'DOADO', selected_ngo_id: ngo.id });
       for (let i = 0; i < 3; i++) await ctx.storage.upload('items', `${disponivel.id}/${i}.webp`, pdfBuffer(), 'image/webp');
-      const token = (await login(donor.email, PASSWORD)).json().token;
+      const token = tokenFromResponse(await login(donor.email, PASSWORD));
 
       const res = await call('DELETE', '/profile', donor, { password: PASSWORD });
       expect(res.statusCode).toBe(204);
+      expect(res.cookies.find((c) => c.name === 'cd_session')).toMatchObject({ value: '' });
       await expectContract(res, 'DELETE', '/profile');
 
       const items = await ctx.db.sql`SELECT id FROM items WHERE donor_id = ${donor.id}`;

@@ -148,8 +148,8 @@ export const toCancelResultDto = (r: { item: Item; cancelledBy: Role }): CancelR
 });
 
 // ── WebSocket: mensagens no fio ──
+// A autenticação é pelo cookie no handshake (ADR-13): não existe mais a mensagem {type:'auth'}.
 export const WsClientMessage = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('auth'), token: z.string().min(1) }),
   z.object({ type: z.literal('subscribe'), item_id: z.uuid() }),
   z.object({ type: z.literal('unsubscribe'), item_id: z.uuid() }),
   z.object({ type: z.literal('ping') }),

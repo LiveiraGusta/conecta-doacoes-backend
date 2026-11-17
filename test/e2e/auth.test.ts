@@ -1,7 +1,17 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildTestApp, closeTestApp, resetDb, type TestContext } from '../helpers/app';
 import { expectContract } from '../helpers/contract';
-import { createAdmin, createNgo, imageBuffer, PASSWORD, pdfBuffer, randomCnpj } from '../helpers/factories';
+import {
+  createAdmin,
+  createDonor,
+  createNgo,
+  imageBuffer,
+  PASSWORD,
+  pdfBuffer,
+  randomCnpj,
+  sessionCookie,
+  tokenFromResponse,
+} from '../helpers/factories';
 import { multipart, type FilePart } from '../helpers/multipart';
 
 const donorBody = (over: Record<string, unknown> = {}) => ({
@@ -149,7 +159,7 @@ describe('Módulo 1 — Autenticação', () => {
         const me = await ctx.app.inject({
           method: 'GET',
           url: '/api/v1/auth/me',
-          headers: { authorization: `Bearer ${login.json().token}` },
+          headers: { cookie: sessionCookie(tokenFromResponse(login)) },
         });
         expect(me.statusCode).toBe(200);
         expect(me.json().user.role).toBe(role);
@@ -173,7 +183,7 @@ describe('Módulo 1 — Autenticação', () => {
       await expectContract(wrong, 'POST', '/auth/login');
     });
 
-    it('401 no /auth/me sem token', async () => {
+    it('401 no /auth/me sem cookie', async () => {
       const res = await ctx.app.inject({ method: 'GET', url: '/api/v1/auth/me' });
       expect(res.statusCode).toBe(401);
       await expectContract(res, 'GET', '/auth/me');
@@ -183,5 +193,84 @@ describe('Módulo 1 — Autenticação', () => {
   it('randomCnpj das factories gera CNPJs válidos (sanidade do helper)', async () => {
     const res = await registerNgo(ngoFields({ cnpj: randomCnpj() }), [doc(pdfBuffer())]);
     expect(res.statusCode).toBe(201);
+  });
+  describe('sessão por cookie httpOnly (ADR-13)', () => {
+    const loginDonor = async () => {
+      const donor = await createDonor(ctx.db);
+      return ctx.app.inject({ method: 'POST', url: '/api/v1/auth/login', payload: { email: donor.email, password: PASSWORD } });
+    };
+
+    it('login grava o cookie com os atributos certos e não devolve o token no corpo', async () => {
+      const res = await loginDonor();
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).not.toHaveProperty('token');
+      const cookie = res.cookies.find((c) => c.name === 'cd_session');
+      expect(cookie).toMatchObject({ httpOnly: true, sameSite: 'Lax', path: '/api/v1', maxAge: 7 * 24 * 60 * 60 });
+      expect(cookie!.value.split('.')).toHaveLength(3); // JWT
+    });
+
+    it('cadastro de doador também já entra logado pelo cookie', async () => {
+      const res = await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/register/donor', payload: donorBody() });
+      const me = await ctx.app.inject({ method: 'GET', url: '/api/v1/auth/me', headers: { cookie: sessionCookie(tokenFromResponse(res)) } });
+      expect(me.statusCode).toBe(200);
+    });
+
+    it('o header Authorization: Bearer não é mais aceito', async () => {
+      const token = tokenFromResponse(await loginDonor());
+      const res = await ctx.app.inject({ method: 'GET', url: '/api/v1/auth/me', headers: { authorization: `Bearer ${token}` } });
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('POST /auth/logout apaga o cookie com os mesmos atributos (204, mesmo sem sessão)', async () => {
+      for (const headers of [{ cookie: sessionCookie(tokenFromResponse(await loginDonor())) }, {}]) {
+        const res = await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/logout', headers });
+        expect(res.statusCode).toBe(204);
+        expect(res.body).toBe('');
+        const cookie = res.cookies.find((c) => c.name === 'cd_session');
+        expect(cookie).toMatchObject({ value: '', path: '/api/v1', httpOnly: true, sameSite: 'Lax' });
+        expect(cookie!.expires!.getTime()).toBeLessThan(Date.now());
+        await expectContract(res, 'POST', '/auth/logout');
+      }
+    });
+
+    it('403 CSRF_HEADER_MISSING sem x-requested-with, em rota pública e em rota logada', async () => {
+      const donor = await createDonor(ctx.db);
+      const login = await ctx.rawInject({ method: 'POST', url: '/api/v1/auth/login', payload: { email: donor.email, password: PASSWORD } });
+      expect(login.statusCode).toBe(403);
+      expect(login.json()).toMatchObject({ error: 'CSRF_HEADER_MISSING' });
+      await expectContract(login, 'POST', '/auth/login');
+
+      const cookie = sessionCookie(tokenFromResponse(await loginDonor()));
+      const patch = await ctx.rawInject({ method: 'PATCH', url: '/api/v1/profile', headers: { cookie }, payload: { name: 'Novo' } });
+      expect(patch.statusCode).toBe(403);
+      expect(patch.json().error).toBe('CSRF_HEADER_MISSING');
+
+      // GET não altera estado: dispensa o header.
+      const me = await ctx.rawInject({ method: 'GET', url: '/api/v1/auth/me', headers: { cookie } });
+      expect(me.statusCode).toBe(200);
+    });
+
+    it('sem sessão a resposta é 401, não 403: a autenticação vem antes da checagem anti-CSRF', async () => {
+      const res = await ctx.rawInject({ method: 'PATCH', url: '/api/v1/profile', payload: { name: 'Novo' } });
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('CORS libera credenciais, o header anti-CSRF e expõe o x-request-id', async () => {
+      const res = await ctx.app.inject({
+        method: 'OPTIONS',
+        url: '/api/v1/auth/login',
+        headers: {
+          origin: 'http://localhost:5173',
+          'access-control-request-method': 'POST',
+          'access-control-request-headers': 'content-type,x-requested-with',
+        },
+      });
+      expect(res.headers['access-control-allow-origin']).toBe('http://localhost:5173');
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+      expect(String(res.headers['access-control-allow-headers'])).toContain('x-requested-with');
+
+      const get = await ctx.app.inject({ method: 'GET', url: '/api/v1/auth/me', headers: { origin: 'http://localhost:5173' } });
+      expect(String(get.headers['access-control-expose-headers'])).toContain('x-request-id');
+    });
   });
 });

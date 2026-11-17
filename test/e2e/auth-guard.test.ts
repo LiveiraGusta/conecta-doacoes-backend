@@ -15,23 +15,45 @@ describe('toda rota nasce fechada', () => {
       .filter(({ method, route }) => method !== 'HEAD' && method !== 'OPTIONS' && !route.config?.public)
       .map(({ method, route }) => ({ method, url: route.url.replace(/:[A-Za-z]+/g, randomUUID()) }));
 
-  it('rotas não públicas respondem 401 sem token e com token inválido', async () => {
+  it('rotas não públicas respondem 401 sem cookie, com cookie inválido e com Bearer', async () => {
     expect(protectedRoutes().length).toBeGreaterThanOrEqual(3); // /auth/me + 2 de /admin
+    const valid = ctx.app.jwt.sign({ sub: randomUUID(), role: 'DONOR' });
+    const variants: Record<string, string>[] = [{}, { cookie: 'cd_session=token-invalido' }, { authorization: `Bearer ${valid}` }];
     for (const { method, url } of protectedRoutes()) {
-      for (const authorization of [undefined, 'Bearer token-invalido']) {
-        const res = await ctx.app.inject({ method: method as 'GET', url, headers: authorization ? { authorization } : {} });
-        expect(res.statusCode, `${method} ${url}`).toBe(401);
+      for (const headers of variants) {
+        const res = await ctx.app.inject({ method: method as 'GET', url, headers });
+        expect(res.statusCode, `${method} ${url} ${JSON.stringify(headers)}`).toBe(401);
         expect(res.json()).toMatchObject({ error: 'UNAUTHORIZED' });
       }
     }
   });
 
-  it('token válido de usuário que não existe mais → 401', async () => {
+  it('cookie válido de usuário que não existe mais → 401', async () => {
     const token = ctx.app.jwt.sign({ sub: randomUUID(), role: 'DONOR' });
     for (const { method, url } of protectedRoutes()) {
-      const res = await ctx.app.inject({ method: method as 'GET', url, headers: { authorization: `Bearer ${token}` } });
+      const res = await ctx.app.inject({ method: method as 'GET', url, headers: { cookie: `cd_session=${token}` } });
       expect(res.statusCode, `${method} ${url}`).toBe(401);
     }
+  });
+
+  it('a lista de rotas públicas é exatamente esta (um `public: true` acidental quebra o teste)', () => {
+    const publicRoutes = ctx.routes
+      .filter((r) => r.config?.public)
+      .flatMap((r) => (Array.isArray(r.method) ? r.method : [r.method]).filter((m) => m !== 'HEAD').map((m) => `${m} ${r.url}`))
+      .sort();
+    expect(publicRoutes).toEqual(
+      [
+        'GET /api/v1/chats/ws',
+        'GET /health',
+        'GET /health/ready',
+        'POST /api/v1/auth/login',
+        'POST /api/v1/auth/logout',
+        'POST /api/v1/auth/password/forgot',
+        'POST /api/v1/auth/password/reset',
+        'POST /api/v1/auth/register/donor',
+        'POST /api/v1/auth/register/ngo',
+      ].sort(),
+    );
   });
 
   it('rota inexistente → 404 NOT_FOUND, não 401', async () => {

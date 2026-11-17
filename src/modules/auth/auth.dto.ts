@@ -89,7 +89,8 @@ export const UserDto = z
   .describe('User');
 export type UserDto = z.infer<typeof UserDto>;
 
-export const AuthResponseDto = z.object({ token: z.string(), user: UserDto }).describe('AuthResponse');
+/** O token não vai no corpo: ele sai só no cookie httpOnly `cd_session` (ADR-13). */
+export const AuthResponseDto = z.object({ user: UserDto }).describe('AuthResponse');
 export type AuthResponseDto = z.infer<typeof AuthResponseDto>;
 
 export const MeResponseDto = z.object({ user: UserDto });
@@ -115,7 +116,4 @@ export const toUserDto = (u: UserWithProfile): UserDto => ({
     : {}),
 });
 
-export const toAuthResponseDto = (r: { token: string; user: UserWithProfile }): AuthResponseDto => ({
-  token: r.token,
-  user: toUserDto(r.user),
-});
+export const toAuthResponseDto = (r: { user: UserWithProfile }): AuthResponseDto => ({ user: toUserDto(r.user) });

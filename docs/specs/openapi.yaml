@@ -10,13 +10,21 @@ info:
 
     Convenções: JSON em snake_case, datas ISO 8601 em UTC, IDs UUID, erros no formato
     `{ error, message, details? }`. Paginação com `limit` (1–50, default 30) e `offset`.
+
+    Sessão (ADR-13): login e cadastros gravam o cookie httpOnly `cd_session` (SameSite=Lax, Path=/api/v1,
+    7 dias). O navegador o envia sozinho; o cliente usa `credentials: 'include'`. O header
+    `Authorization: Bearer` não é aceito. `POST /auth/logout` apaga o cookie.
+
+    Anti-CSRF: toda requisição POST, PUT, PATCH ou DELETE precisa do header `X-Requested-With: XMLHttpRequest`,
+    inclusive as rotas públicas de /auth. Sem ele: `403 CSRF_HEADER_MISSING`. Nas rotas logadas,
+    a sessão é conferida antes: sem cookie válido a resposta é 401.
 servers:
   - url: http://localhost:3333/api/v1
     description: Local
   - url: https://<api>/api/v1
     description: Produção
 security:
-  - bearerAuth: []
+  - cookieAuth: []
 tags:
   - name: Auth
     description: Módulo 1 — Autenticação
@@ -28,8 +36,9 @@ tags:
     description: Módulo 3 — Match Invertido
   - name: Chats
     description: |
-      Módulo 4 — Chat & Encerramento. Em tempo real: WebSocket em /api/v1/chats/ws
-      (protocolo em "Spec do Chat em Tempo Real — WebSocket.md"); as rotas REST abaixo continuam valendo.
+      Módulo 4 — Chat & Encerramento. Em tempo real: WebSocket em /api/v1/chats/ws, autenticado pelo cookie
+      de sessão no handshake (protocolo em "Spec do Chat em Tempo Real — WebSocket.md"); as rotas REST abaixo
+      continuam valendo.
   - name: Reports
     description: Módulo 4 — Denúncias
   - name: Profile
@@ -67,6 +76,7 @@ paths:
         '409':
           description: EMAIL_TAKEN
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '403': { $ref: '#/components/responses/CsrfHeaderMissing' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /auth/register/ngo:
@@ -104,6 +114,7 @@ paths:
         '409':
           description: EMAIL_TAKEN ou CNPJ_TAKEN
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '403': { $ref: '#/components/responses/CsrfHeaderMissing' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /auth/login:
@@ -131,6 +142,7 @@ paths:
         '401':
           description: INVALID_CREDENTIALS
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '403': { $ref: '#/components/responses/CsrfHeaderMissing' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /auth/me:
@@ -148,6 +160,19 @@ paths:
                 properties:
                   user: { $ref: '#/components/schemas/User' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Sair (apaga o cookie de sessão)
+      description: |
+        Pública e idempotente: responde 204 com ou sem sessão. Com o cookie httpOnly, só o servidor
+        consegue apagá-lo; o `Set-Cookie` repete os mesmos atributos do login, com validade expirada.
+      security: []
+      responses:
+        '204': { description: Sessão encerrada }
+        '403': { $ref: '#/components/responses/CsrfHeaderMissing' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /auth/password/forgot:
     post:
@@ -171,6 +196,7 @@ paths:
       responses:
         '202': { description: Pedido recebido }
         '400': { $ref: '#/components/responses/ValidationError' }
+        '403': { $ref: '#/components/responses/CsrfHeaderMissing' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /auth/password/reset:
@@ -194,6 +220,7 @@ paths:
         '400':
           description: INVALID_RESET_TOKEN (inválido, expirado ou já usado) ou VALIDATION_ERROR
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '403': { $ref: '#/components/responses/CsrfHeaderMissing' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /admin/ngos:
@@ -737,7 +764,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
     delete:
       tags: [Profile]
-      summary: Excluir a conta (anonimização)
+      summary: Excluir a conta (anonimização; apaga o cookie de sessão)
       requestBody:
         required: true
         content:
@@ -761,7 +788,10 @@ paths:
   /profile/password:
     patch:
       tags: [Profile]
-      summary: Trocar senha (invalida tokens anteriores)
+      summary: Trocar senha (encerra as outras sessões e renova o cookie desta)
+      description: |
+        Tokens emitidos antes da troca deixam de valer em todos os aparelhos. A resposta traz um `Set-Cookie`
+        novo para a sessão atual, que continua logada.
       requestBody:
         required: true
         content:
@@ -778,6 +808,7 @@ paths:
           description: INVALID_CURRENT_PASSWORD, SAME_PASSWORD ou VALIDATION_ERROR
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/CsrfHeaderMissing' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /profile/ngo-document:
@@ -856,7 +887,11 @@ paths:
 
 components:
   securitySchemes:
-    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: cd_session
+      description: JWT em cookie httpOnly gravado pelo login/cadastro (ADR-13). Não é lido pelo JS do navegador.
 
   parameters:
     Limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 30 } }
@@ -868,7 +903,10 @@ components:
       description: UNAUTHORIZED
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
     Forbidden:
-      description: FORBIDDEN
+      description: FORBIDDEN (ou CSRF_HEADER_MISSING, se faltar o header X-Requested-With)
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    CsrfHeaderMissing:
+      description: CSRF_HEADER_MISSING (falta o header X-Requested-With)
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
     ValidationError:
       description: VALIDATION_ERROR
@@ -954,9 +992,9 @@ components:
 
     AuthResponse:
       type: object
-      required: [token, user]
+      description: O token não vem no corpo; ele vai no cookie httpOnly `cd_session` (header Set-Cookie).
+      required: [user]
       properties:
-        token: { type: string }
         user: { $ref: '#/components/schemas/User' }
 
     AdminNgo:

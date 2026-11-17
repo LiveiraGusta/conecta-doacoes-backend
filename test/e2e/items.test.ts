@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import sharp from 'sharp';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { User } from '../../src/types';
 import { buildTestApp, closeTestApp, resetDb, type TestContext } from '../helpers/app';
@@ -73,6 +74,23 @@ describe('Módulo 2 — Vitrine & Doações', () => {
 
       const events = await ctx.db.sql`SELECT from_status, to_status, actor_id FROM item_events WHERE item_id = ${item.id}`;
       expect(events).toEqual([{ from_status: null, to_status: 'DISPONIVEL', actor_id: donor.id }]);
+    });
+
+    it('preserva a ordem do upload: photos[0] é a 1ª foto enviada (a capa escolhida no front)', async () => {
+      // Larguras diferentes identificam cada foto depois da conversão para WEBP.
+      const widths = [40, 24, 32];
+      const files = await Promise.all(widths.map((w, i) => imageBuffer('jpeg', w).then((b) => photo(b, i))));
+      const created = (await publishOnce(fields, files)).json();
+      const detail = (await ctx.app.inject({ method: 'GET', url: `/api/v1/items/${created.id}`, headers: authHeader(ctx.app, donor) })).json();
+
+      for (const body of [created, detail]) {
+        const stored = body.photos.map((p: { photo_url: string }) => {
+          const path = ctx.storage.pathFromPublicUrl(p.photo_url)!;
+          return ctx.storage.files.get(`items/${path}`)!.body;
+        });
+        const actual = await Promise.all(stored.map(async (b: Buffer) => (await sharp(b).metadata()).width));
+        expect(actual).toEqual(widths);
+      }
     });
 
     it.each([0, 2])('400 INVALID_PHOTO_COUNT com %i fotos', async (n) => {

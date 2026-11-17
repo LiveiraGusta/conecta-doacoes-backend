@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { WebSocket } from 'ws';
 import { issuedBeforePasswordChange, type JwtPayload } from '../../core/auth';
 import { AppError } from '../../core/errors';
+import { SESSION_COOKIE } from '../../core/session-cookie';
 import type { RealtimeBus } from '../../core/realtime';
 import type { AuthContext, AuthUser } from '../../types';
 import { toWsEvent, WsClientMessage, type WsServerMessage } from './chats.dto';
@@ -11,14 +12,16 @@ export interface ChatsWsDeps {
   service: Pick<ChatsService, 'authorizeSubscription' | 'unread'>;
   bus: RealtimeBus;
   findAuthContext(userId: string): Promise<AuthContext | null>;
-  authTimeoutMs?: number;
+  /** Origens do frontend aceitas no handshake (as mesmas do CORS). */
+  allowedOrigins: string[];
   heartbeatMs?: number;
 }
 
 /** Códigos de fechamento (faixa 4000–4999 é da aplicação). */
 export const WS_CLOSE = {
-  AUTH_TIMEOUT: 4401,
+  /** Sem cookie de sessão, token inválido/expirado ou usuário que não existe mais. */
   UNAUTHORIZED: 4401,
+  /** ADMIN (sem chat) ou Origin fora da lista: o cliente não deve reconectar. */
   FORBIDDEN: 4403,
 } as const;
 
@@ -28,23 +31,23 @@ const MAX_SUBSCRIPTIONS = 50;
  * Canal em tempo real do chat: complementa as rotas REST (que continuam sendo o contrato),
  * empurrando novas mensagens e mudanças de status das salas em que o usuário se inscreveu.
  *
- * Protocolo (JSON): o cliente conecta, envia {type:'auth', token} em até 5 s, recebe {type:'ready'}
- * e então {type:'subscribe', item_id} para cada sala. Detalhes em docs/specs/Spec do Chat em Tempo Real.md.
+ * Protocolo (JSON): o navegador conecta levando o cookie de sessão (ADR-13). O servidor confere o Origin
+ * e o cookie no handshake, responde {type:'ready'} e o cliente manda {type:'subscribe', item_id} para cada sala.
+ * Detalhes em docs/specs/Spec do Chat em Tempo Real — WebSocket.md.
  */
 export function chatsWebsocket(app: FastifyInstance, deps: ChatsWsDeps) {
-  const authTimeoutMs = deps.authTimeoutMs ?? 5000;
   const heartbeatMs = deps.heartbeatMs ?? 30_000;
 
   app.get(
     '/chats/ws',
     {
       websocket: true,
-      // Autenticação vem na 1ª mensagem: o navegador não envia Authorization no handshake.
+      // Pública para o hook global: um 401 no upgrade chegaria ao navegador como 1006, sem motivo.
+      // A sessão é conferida aqui dentro, e a falha fecha com 4401/4403.
       config: { public: true },
       schema: { hide: true },
     },
     (socket: WebSocket, req) => {
-      let user: AuthUser | null = null;
       const subscriptions = new Map<string, () => void>();
       // Canal do próprio usuário (não lidas): vale para todas as conversas, inscritas ou não.
       let unsubscribeUser: (() => void) | null = null;
@@ -63,10 +66,6 @@ export function chatsWebsocket(app: FastifyInstance, deps: ChatsWsDeps) {
         subscriptions.delete(itemId);
       };
 
-      const authTimer = setTimeout(() => {
-        if (!user) socket.close(WS_CLOSE.AUTH_TIMEOUT, 'Autenticação não recebida a tempo');
-      }, authTimeoutMs);
-
       // Derruba conexões mortas (sem pong) para não acumular inscrições.
       socket.on('pong', () => {
         alive = true;
@@ -78,28 +77,36 @@ export function chatsWebsocket(app: FastifyInstance, deps: ChatsWsDeps) {
       }, heartbeatMs);
 
       socket.on('close', () => {
-        clearTimeout(authTimer);
         clearInterval(heartbeat);
         for (const itemId of [...subscriptions.keys()]) drop(itemId);
         unsubscribeUser?.();
       });
 
-      async function authenticate(token: string) {
+      const reject = (code: number, reason: string) => {
+        socket.close(code, reason);
+        return null;
+      };
+
+      /** Confere Origin (anti cross-site WebSocket hijacking) e o cookie de sessão, uma vez, no handshake. */
+      async function authenticate(): Promise<AuthUser | null> {
+        const origin = req.headers.origin;
+        if (!origin || !deps.allowedOrigins.includes(origin)) return reject(WS_CLOSE.FORBIDDEN, 'Origem não permitida');
+
+        const token = req.cookies?.[SESSION_COOKIE];
+        if (!token) return reject(WS_CLOSE.UNAUTHORIZED, 'Sessão ausente');
         let payload: JwtPayload;
         try {
           payload = app.jwt.verify<JwtPayload>(token);
         } catch {
-          return socket.close(WS_CLOSE.UNAUTHORIZED, 'Token inválido');
+          return reject(WS_CLOSE.UNAUTHORIZED, 'Sessão inválida');
         }
         const ctx = await deps.findAuthContext(payload.sub);
         if (!ctx || issuedBeforePasswordChange(payload.iat, ctx.passwordChangedAt)) {
-          return socket.close(WS_CLOSE.UNAUTHORIZED, 'Token inválido');
+          return reject(WS_CLOSE.UNAUTHORIZED, 'Sessão inválida');
         }
-        if (ctx.role !== 'DONOR' && ctx.role !== 'NGO') return socket.close(WS_CLOSE.FORBIDDEN, 'Perfil sem chat');
+        if (ctx.role !== 'DONOR' && ctx.role !== 'NGO') return reject(WS_CLOSE.FORBIDDEN, 'Perfil sem chat');
         const { passwordChangedAt: _ignored, ...current } = ctx;
-        user = current;
-        clearTimeout(authTimer);
-        if (socket.readyState !== socket.OPEN) return;
+        if (socket.readyState !== socket.OPEN) return null;
         unsubscribeUser = deps.bus.subscribeUser(current.id, (event) => {
           deps.service
             .unread(current, event.itemId)
@@ -115,7 +122,13 @@ export function chatsWebsocket(app: FastifyInstance, deps: ChatsWsDeps) {
             .catch((err) => sendError(err, event.itemId));
         });
         send({ type: 'ready', user_id: ctx.id });
+        return current;
       }
+
+      const authReady = authenticate().catch((err) => {
+        sendError(err);
+        return reject(WS_CLOSE.UNAUTHORIZED, 'Falha ao autenticar');
+      });
 
       async function subscribe(current: AuthUser, itemId: string) {
         if (subscriptions.has(itemId)) return send({ type: 'subscribed', item_id: itemId });
@@ -147,21 +160,18 @@ export function chatsWebsocket(app: FastifyInstance, deps: ChatsWsDeps) {
         if (!parsed.success) return sendError(new AppError('VALIDATION_ERROR', 'Mensagem fora do protocolo.'));
         const msg = parsed.data;
 
-        if (!user) {
-          if (msg.type !== 'auth') return socket.close(WS_CLOSE.UNAUTHORIZED, 'Envie {type:"auth"} primeiro');
-          return authenticate(msg.token).catch((err) => sendError(err));
-        }
+        // Mensagens que chegarem antes do `ready` esperam a autenticação do handshake.
+        const current = await authReady;
+        if (!current) return;
 
         switch (msg.type) {
-          case 'auth':
-            return send({ type: 'ready', user_id: user.id });
           case 'ping':
             return send({ type: 'pong' });
           case 'unsubscribe':
             drop(msg.item_id);
             return send({ type: 'unsubscribed', item_id: msg.item_id, reason: 'requested' });
           case 'subscribe':
-            return subscribe(user, msg.item_id).catch((err) => sendError(err, msg.item_id));
+            return subscribe(current, msg.item_id).catch((err) => sendError(err, msg.item_id));
         }
       });
     },

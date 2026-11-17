@@ -54,6 +54,17 @@ export function authRoutes(app: FastifyInstance, ctrl: AuthController) {
     handler: ctrl.login,
   });
 
+  r.post('/auth/logout', {
+    config: publicAuth,
+    schema: {
+      tags: ['Auth'],
+      summary: 'Sair: apaga o cookie de sessão (204 mesmo sem sessão)',
+      security: [],
+      response: { 204: z.null().describe('Sessão encerrada'), ...errorResponses(403, 429) },
+    },
+    handler: ctrl.logout,
+  });
+
   r.post('/auth/password/forgot', {
     config: publicAuth,
     schema: {

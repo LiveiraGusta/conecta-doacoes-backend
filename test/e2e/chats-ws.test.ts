@@ -1,7 +1,16 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { User } from '../../src/types';
 import { buildTestApp, closeTestApp, resetDb, type TestContext } from '../helpers/app';
-import { addInterest, authHeader, createAdmin, createDonor, createItem, createNgo, tokenFor } from '../helpers/factories';
+import {
+  addInterest,
+  authHeader,
+  createAdmin,
+  createDonor,
+  createItem,
+  createNgo,
+  sessionCookie,
+  tokenFor,
+} from '../helpers/factories';
 import { openWs, type TestWs } from '../helpers/ws';
 
 describe('Chat em tempo real (WebSocket /api/v1/chats/ws)', () => {
@@ -32,13 +41,16 @@ describe('Chat em tempo real (WebSocket /api/v1/chats/ws)', () => {
     return ctx.app.inject({ method: 'POST', url: `/api/v1${url}`, headers: authHeader(ctx.app, user), payload });
   }
 
-  async function connect(user?: Pick<User, 'id' | 'role'>) {
-    const c = await openWs(ctx.app);
+  /** Conecta já com o cookie de sessão (como o navegador) e espera o `ready`. */
+  async function connect(user: Pick<User, 'id' | 'role'>) {
+    const c = await rawConnect({ cookie: sessionCookie(tokenFor(ctx.app, user)) });
+    expect(await c.next({ type: 'ready' })).toEqual({ type: 'ready', user_id: user.id });
+    return c;
+  }
+
+  async function rawConnect(opts: Parameters<typeof openWs>[1] = {}) {
+    const c = await openWs(ctx.app, opts);
     open.push(c);
-    if (user) {
-      c.send({ type: 'auth', token: tokenFor(ctx.app, user) });
-      expect(await c.next({ type: 'ready' })).toEqual({ type: 'ready', user_id: user.id });
-    }
     return c;
   }
 
@@ -125,38 +137,55 @@ describe('Chat em tempo real (WebSocket /api/v1/chats/ws)', () => {
 
   it('encerramento do servidor fecha as conexões com 1001 (o cliente reconecta)', async () => {
     const other = await buildTestApp();
-    const c = await openWs(other.app);
-    c.send({ type: 'auth', token: tokenFor(other.app, donor) });
+    const c = await openWs(other.app, { cookie: sessionCookie(tokenFor(other.app, donor)) });
     await c.next({ type: 'ready' });
     const closing = c.closed();
     await closeTestApp(other);
     expect(await closing).toEqual({ code: 1001, reason: 'Servidor reiniciando' });
   });
 
-  describe('autenticação na primeira mensagem', () => {
-    it('fecha com 4401 se a primeira mensagem não é auth', async () => {
-      const c = await connect();
-      c.send({ type: 'subscribe', item_id: itemId });
+  describe('autenticação no handshake (cookie + Origin)', () => {
+    it('fecha com 4401 sem cookie de sessão', async () => {
+      const c = await rawConnect();
       expect((await c.closed()).code).toBe(4401);
     });
 
     it('fecha com 4401 com token inválido ou de usuário apagado', async () => {
-      const c = await connect();
-      c.send({ type: 'auth', token: 'token-invalido' });
+      const c = await rawConnect({ cookie: sessionCookie('token-invalido') });
       expect((await c.closed()).code).toBe(4401);
 
       const ghost = await createDonor(ctx.db);
       const token = tokenFor(ctx.app, ghost);
       await ctx.db.sql`DELETE FROM users WHERE id = ${ghost.id}`;
-      const c2 = await connect();
-      c2.send({ type: 'auth', token });
+      const c2 = await rawConnect({ cookie: sessionCookie(token) });
       expect((await c2.closed()).code).toBe(4401);
     });
 
     it('fecha com 4403 para Admin (não participa de chats)', async () => {
-      const c = await connect();
-      c.send({ type: 'auth', token: tokenFor(ctx.app, await createAdmin(ctx.db)) });
+      const c = await rawConnect({ cookie: sessionCookie(tokenFor(ctx.app, await createAdmin(ctx.db))) });
       expect((await c.closed()).code).toBe(4403);
+    });
+
+    it('fecha com 4403 com Origin de outro site ou sem Origin (cross-site WebSocket hijacking)', async () => {
+      const cookie = sessionCookie(tokenFor(ctx.app, donor));
+      for (const origin of ['https://site-malicioso.example', null]) {
+        const c = await rawConnect({ cookie, origin });
+        expect((await c.closed()).code, String(origin)).toBe(4403);
+        expect(c.inbox.some((m) => m.type === 'ready'), String(origin)).toBe(false);
+      }
+    });
+
+    it('mensagem enviada antes do ready espera a autenticação', async () => {
+      const c = await rawConnect({ cookie: sessionCookie(tokenFor(ctx.app, donor)) });
+      c.send({ type: 'ping' });
+      expect(await c.next({ type: 'ready' })).toEqual({ type: 'ready', user_id: donor.id });
+      expect(await c.next({ type: 'pong' })).toEqual({ type: 'pong' });
+    });
+
+    it('a antiga mensagem {type:"auth"} saiu do protocolo', async () => {
+      const c = await connect(donor);
+      c.send({ type: 'auth', token: tokenFor(ctx.app, donor) });
+      expect(await c.next({ type: 'error' })).toMatchObject({ error: 'VALIDATION_ERROR' });
     });
 
     it('mensagem fora do protocolo vira erro sem derrubar a conexão', async () => {

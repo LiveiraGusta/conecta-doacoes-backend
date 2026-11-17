@@ -10,19 +10,20 @@ Antecipa parte do ADR-08 (WebSocket era V2). Os limites desta versão estão no 
 | --- | --- |
 | URL | `wss://<api>/api/v1/chats/ws` (local: `ws://localhost:3333/api/v1/chats/ws`) |
 | Formato | Texto JSON, uma mensagem por frame, até 16 KB |
-| Autenticação | `{ "type": "auth", "token": "<jwt>" }` como **primeira** mensagem, em até 5 s |
+| Autenticação | Cookie de sessão `cd_session` enviado pelo navegador no handshake, mais `Origin` permitido (ADR-13) |
 | Quem conecta | `DONOR` e `NGO`; `ADMIN` é recusado |
 | Envio de mensagem | Continua pelo REST: `POST /chats/:itemId/messages` |
 | Fallback | Se a conexão cair, o frontend volta ao polling com `GET /chats/:itemId/messages?after=` |
 
-O token vai na primeira mensagem, e não na URL, porque o navegador não envia `Authorization` no handshake e porque um token na query string vaza para logs de proxy.
+A sessão vai no cookie httpOnly que o navegador já envia no handshake (ADR-13). O JS não tem o token, e nada vai na URL, que vazaria para logs de proxy. O servidor também confere o `Origin` contra `CORS_ORIGIN`, para outro site não abrir uma conexão com o cookie do usuário (*cross-site WebSocket hijacking*).
+
+> Até a V1.1 a autenticação era a mensagem `{type:"auth", token}`. Ela saiu do protocolo: enviá-la agora gera `error` `VALIDATION_ERROR`.
 
 ## Fluxo
 
 ```text
 cliente                                         API
-  │── conecta ──────────────────────────────────▶│
-  │── {type:"auth", token} ─────────────────────▶│  valida o JWT e lê o usuário do banco
+  │── conecta (cookie cd_session + Origin) ─────▶│  confere Origin, valida o JWT e lê o usuário do banco
   │◀──────────────────── {type:"ready", user_id} ─│
   │── {type:"subscribe", item_id} ──────────────▶│  mesma regra de GET /chats/:itemId/messages
   │◀────────────── {type:"subscribed", item_id} ──│
@@ -40,7 +41,6 @@ Uma conexão pode acompanhar até 50 salas ao mesmo tempo, por exemplo a lista d
 
 | `type` | Campos | Efeito |
 | --- | --- | --- |
-| `auth` | `token` | Autentica. Precisa ser a primeira mensagem. |
 | `subscribe` | `item_id` (UUID) | Passa a receber os eventos da sala. |
 | `unsubscribe` | `item_id` | Para de receber. |
 | `ping` | — | Responde `pong` (keep-alive de aplicação, opcional). |
@@ -89,8 +89,8 @@ Os códigos de `error` são os mesmos do REST:
 
 | Código | Motivo |
 | --- | --- |
-| `4401` | Não autenticou em 5 s, a primeira mensagem não foi `auth`, o token é inválido ou o usuário não existe mais |
-| `4403` | O usuário é `ADMIN` |
+| `4401` | Sem cookie de sessão, token inválido ou expirado, ou o usuário não existe mais |
+| `4403` | O usuário é `ADMIN`, ou o `Origin` não está na lista do `CORS_ORIGIN` (ou falta) |
 | `1001` | O servidor está reiniciando (deploy). O cliente reconecta. |
 
 O servidor manda um `ping` de protocolo a cada 30 s e derruba conexões que não respondem. Os navegadores respondem sozinhos.
@@ -106,7 +106,7 @@ O servidor manda um `ping` de protocolo a cada 30 s e derruba conexões que não
 ## Uso recomendado no frontend
 
 1. Abrir a sala e carregar o histórico com `GET /chats/:itemId/messages`.
-2. Conectar o WS, autenticar e se inscrever na sala.
+2. Conectar o WS (o navegador leva o cookie), esperar o `ready` e se inscrever na sala. Mensagens enviadas antes do `ready` esperam a autenticação.
 3. Enviar mensagens pelo `POST` e acrescentar na tela o que chegar em `message.created`, deduplicando pelo `id`.
 4. Com a sala aberta e visível, chamar `POST /chats/:itemId/read` ao abrir e a cada `message.created` recebido. O badge usa `GET /chats/unread` no boot e `unread.updated` depois.
 5. Se o WS cair: ativar o polling de 3 s com `?after=` e tentar reconectar com backoff (1 s, 2 s, 5 s, 10 s). Ao reconectar, desligar o polling.

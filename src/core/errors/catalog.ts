@@ -10,6 +10,7 @@ export const ERRORS = {
   UNAUTHORIZED: { status: 401, message: 'Faça login para continuar.' },
   INVALID_CREDENTIALS: { status: 401, message: 'E-mail ou senha incorretos.' },
   FORBIDDEN: { status: 403, message: 'Você não tem permissão para esta ação.' },
+  CSRF_HEADER_MISSING: { status: 403, message: 'Requisição recusada por segurança. Atualize a página e tente de novo.' },
   NGO_NOT_APPROVED: { status: 403, message: 'Sua ONG ainda não foi aprovada.' },
   OUT_OF_REGION: { status: 403, message: 'Este item não está na sua cidade.' },
   NOT_FOUND: { status: 404, message: 'Recurso não encontrado.' },

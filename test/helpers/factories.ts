@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import sharp from 'sharp';
 import type { Db } from '../../src/core/db';
 import type { NgoStatus, Role, User } from '../../src/types';
+import { SESSION_COOKIE } from '../../src/core/session-cookie';
 
 export const PASSWORD = 'Senha1234';
 let hash: Promise<string> | undefined;
@@ -59,9 +60,19 @@ export async function createNgo(
 export const tokenFor = (app: FastifyInstance, user: Pick<User, 'id' | 'role'>) =>
   app.jwt.sign({ sub: user.id, role: user.role });
 
+/** Cabeçalho `cookie` com a sessão (ADR-13). Aceita um usuário (assina na hora) ou um token pronto. */
+export const sessionCookie = (token: string) => `${SESSION_COOKIE}=${token}`;
+
 export const authHeader = (app: FastifyInstance, user: Pick<User, 'id' | 'role'>) => ({
-  authorization: `Bearer ${tokenFor(app, user)}`,
+  cookie: sessionCookie(tokenFor(app, user)),
 });
+
+/** Token gravado no Set-Cookie de uma resposta (login, cadastro, troca de senha). */
+export const tokenFromResponse = (res: { cookies: { name: string; value: string }[] }) => {
+  const c = res.cookies.find((x) => x.name === SESSION_COOKIE);
+  if (!c?.value) throw new Error('Resposta sem cookie de sessão');
+  return c.value;
+};
 
 // ── Arquivos ──
 export const pdfBuffer = () => Buffer.from('%PDF-1.4\n1 0 obj << >> endobj\ntrailer << >>\n%%EOF\n');

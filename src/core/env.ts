@@ -17,6 +17,11 @@ const Env = z.object({
   STORAGE_BUCKET_DOCS: z.string().default('ngo-docs'),
   JWT_SECRET: z.string().min(32, 'JWT_SECRET precisa de 32+ caracteres'),
   JWT_EXPIRES_IN: z.string().default('7d'),
+  // ── Sessão por cookie httpOnly (ADR-13) ──
+  // Secure exige HTTPS: false só em dev (http://localhost). Front e API no mesmo site (app.<dom> + api.<dom>).
+  COOKIE_SECURE: bool.default(false),
+  // Opcional: domínio do cookie (ex.: .conectadoacoes.com.br). Vazio = só o host da API.
+  COOKIE_DOMAIN: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(3).optional()),
   CORS_ORIGIN: z.string().transform((s) =>
     s
       .split(',')
@@ -38,6 +43,9 @@ const Env = z.object({
   // Frontend: o link do e-mail aponta para APP_URL/redefinir-senha?token=…
   APP_URL: z.url().default('http://localhost:5173'),
 }).superRefine((e, ctx) => {
+  if (e.NODE_ENV === 'production' && !e.COOKIE_SECURE) {
+    ctx.addIssue({ code: 'custom', path: ['COOKIE_SECURE'], message: 'Obrigatório true em produção (HTTPS)' });
+  }
   if (e.NODE_ENV === 'production' && !e.RESEND_API_KEY) {
     ctx.addIssue({ code: 'custom', path: ['RESEND_API_KEY'], message: 'Obrigatória em produção (recuperação de senha)' });
   }
@@ -51,3 +59,7 @@ if (!parsed.success) {
 
 export const env = parsed.data;
 export const isProd = env.NODE_ENV === 'production';
+
+/** Origens do frontend aceitas no CORS e no handshake do WebSocket. Em dev, o Vite (5173) entra sozinho. */
+export const allowedOrigins: string[] =
+  isProd || env.NODE_ENV === 'test' ? env.CORS_ORIGIN : [...new Set([...env.CORS_ORIGIN, 'http://localhost:5173'])];
