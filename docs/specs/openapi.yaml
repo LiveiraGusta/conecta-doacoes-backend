@@ -1,0 +1,1115 @@
+openapi: 3.1.0
+info:
+  title: Conecta Doações API
+  version: 1.0.0
+  description: |
+    API do MVP Conecta Doações (V1.0). Contrato consolidado dos 4 módulos (Autenticação & Moderação, Vitrine & Doações,
+    Match Invertido, Chat, Encerramento & Denúncias), do Perfil e do Health check.
+
+    Versionamento: rotas de negócio em /api/v1; /health e /docs ficam fora da versão.
+
+    Convenções: JSON em snake_case, datas ISO 8601 em UTC, IDs UUID, erros no formato
+    `{ error, message, details? }`. Paginação com `limit` (1–50, default 30) e `offset`.
+servers:
+  - url: http://localhost:3333/api/v1
+    description: Local
+  - url: https://<api>/api/v1
+    description: Produção
+security:
+  - bearerAuth: []
+tags:
+  - name: Auth
+    description: Módulo 1 — Autenticação
+  - name: Admin
+    description: Módulo 1 — Moderação de ONGs
+  - name: Items
+    description: Módulo 2 — Vitrine & Doações
+  - name: Interests
+    description: Módulo 3 — Match Invertido
+  - name: Chats
+    description: |
+      Módulo 4 — Chat & Encerramento. Em tempo real: WebSocket em /api/v1/chats/ws
+      (protocolo em "Spec do Chat em Tempo Real — WebSocket.md"); as rotas REST abaixo continuam valendo.
+  - name: Reports
+    description: Módulo 4 — Denúncias
+  - name: Profile
+    description: Perfil do usuário logado
+  - name: Health
+    description: Liveness e readiness (fora de /api/v1)
+
+paths:
+  # ───────────────────────── Módulo 1 — Autenticação & Moderação ─────────────────────────
+  /auth/register/donor:
+    post:
+      tags: [Auth]
+      summary: Cadastrar doador
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password, city, state]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 255 }
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8, maxLength: 72, description: 'Ao menos 1 letra e 1 número' }
+                city: { type: string, minLength: 2, maxLength: 100 }
+                state: { $ref: '#/components/schemas/UF' }
+      responses:
+        '201':
+          description: Doador criado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '409':
+          description: EMAIL_TAKEN
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /auth/register/ngo:
+    post:
+      tags: [Auth]
+      summary: Cadastrar ONG (nasce PENDENTE_APROVACAO)
+      security: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [name, email, password, city, state, cnpj, document]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 255 }
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8, maxLength: 72 }
+                city: { type: string, minLength: 2, maxLength: 100 }
+                state: { $ref: '#/components/schemas/UF' }
+                cnpj: { type: string, description: '14 dígitos, com ou sem máscara; dígitos verificadores válidos' }
+                website: { type: string, format: uri, maxLength: 255 }
+                document: { type: string, format: binary, description: 'PDF, JPG, PNG ou WEBP até 5 MB' }
+            encoding:
+              document: { contentType: 'application/pdf, image/jpeg, image/png, image/webp' }
+      responses:
+        '201':
+          description: ONG criada, aguardando aprovação
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400':
+          description: INVALID_DOCUMENT ou VALIDATION_ERROR
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '409':
+          description: EMAIL_TAKEN ou CNPJ_TAKEN
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 1 }
+      responses:
+        '200':
+          description: Autenticado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401':
+          description: INVALID_CREDENTIALS
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Usuário do token, lido do banco
+      responses:
+        '200':
+          description: Usuário atual
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /admin/ngos:
+    get:
+      tags: [Admin]
+      summary: Listar ONGs para moderação (ADMIN)
+      parameters:
+        - { name: status, in: query, schema: { allOf: [{ $ref: '#/components/schemas/NgoStatus' }], default: PENDENTE_APROVACAO } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: ONGs, mais antigas primeiro
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [total, data]
+                properties:
+                  total: { type: integer, minimum: 0 }
+                  data: { type: array, items: { $ref: '#/components/schemas/AdminNgo' } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/ngos/{ngoProfileId}/status:
+    parameters:
+      - { name: ngoProfileId, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Admin]
+      summary: Aprovar ou rejeitar ONG (ADMIN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [ATIVO, REJEITADO] }
+                rejection_reason: { type: string, minLength: 10, maxLength: 1000, description: 'Obrigatório se REJEITADO' }
+      responses:
+        '200':
+          description: Status atualizado
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, status, rejection_reason]
+                properties:
+                  id: { type: string, format: uuid }
+                  status: { type: string, enum: [ATIVO, REJEITADO] }
+                  rejection_reason: { type: [string, 'null'] }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: NGO_NOT_FOUND
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  # ───────────────────────── Módulo 2 — Vitrine & Doações ─────────────────────────
+  /items:
+    post:
+      tags: [Items]
+      summary: Publicar item com exatamente 3 fotos (DONOR)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [title, category, photos]
+              properties:
+                title: { type: string, minLength: 3, maxLength: 255 }
+                description: { type: string, maxLength: 2000 }
+                category: { $ref: '#/components/schemas/Category' }
+                city: { type: string, minLength: 2, maxLength: 100, description: 'Default: cidade do doador' }
+                state: { $ref: '#/components/schemas/UF' }
+                photos:
+                  type: array
+                  minItems: 3
+                  maxItems: 3
+                  items: { type: string, format: binary }
+            encoding:
+              photos: { contentType: 'image/jpeg, image/png, image/webp' }
+      responses:
+        '201':
+          description: Item criado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Item' }
+        '400':
+          description: INVALID_PHOTO_COUNT, INVALID_PHOTO ou VALIDATION_ERROR
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: INVALID_PHOTO_COUNT, message: 'É obrigatório enviar exatamente 3 fotos do item.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413':
+          description: PAYLOAD_TOO_LARGE
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /items/feed:
+    get:
+      tags: [Items]
+      summary: Feed da cidade/UF do usuário logado
+      description: Acesso DONOR e NGO. Itens DISPONIVEL e EM_PROGRESSO, mais novos primeiro.
+      parameters:
+        - { name: category, in: query, schema: { $ref: '#/components/schemas/Category' } }
+        - { name: search, in: query, schema: { type: string, minLength: 1, maxLength: 100 } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Lista paginada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ItemList' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /items/me:
+    get:
+      tags: [Items]
+      summary: Minhas doações (DONOR) ou meus interesses (NGO)
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/ItemStatus' } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Lista paginada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ItemList' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /items/{itemId}:
+    parameters:
+      - $ref: '#/components/parameters/ItemId'
+    get:
+      tags: [Items]
+      summary: Detalhe do item
+      responses:
+        '200':
+          description: Item com contexto do usuário
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ItemDetail' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/ItemNotFound' }
+
+  # ───────────────────────── Módulo 3 — Match Invertido ─────────────────────────
+  /items/{itemId}/interest:
+    parameters:
+      - $ref: '#/components/parameters/ItemId'
+    post:
+      tags: [Interests]
+      summary: Demonstrar interesse (like)
+      description: Acesso NGO com status ATIVO. Item DISPONIVEL da mesma cidade/UF.
+      responses:
+        '201':
+          description: Interesse registrado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Interest' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: FORBIDDEN, NGO_NOT_APPROVED ou OUT_OF_REGION
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '404': { $ref: '#/components/responses/ItemNotFound' }
+        '409':
+          description: ALREADY_INTERESTED ou ITEM_NOT_AVAILABLE
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    delete:
+      tags: [Interests]
+      summary: Desfazer interesse
+      description: Acesso NGO que deu o like. Bloqueado se a ONG já foi selecionada.
+      responses:
+        '204': { description: Interesse removido }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: INTEREST_NOT_FOUND
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '409':
+          description: ALREADY_SELECTED
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /items/{itemId}/interests:
+    parameters:
+      - $ref: '#/components/parameters/ItemId'
+    get:
+      tags: [Interests]
+      summary: Listar ONGs interessadas
+      description: Acesso DONOR dono do item. ONGs ATIVO primeiro, depois por data do like.
+      responses:
+        '200':
+          description: Lista de interessadas
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InterestList' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/ItemNotFound' }
+
+  /items/{itemId}/select-ngo:
+    parameters:
+      - $ref: '#/components/parameters/ItemId'
+    post:
+      tags: [Interests]
+      summary: Escolher ONG e abrir chat (DISPONIVEL → EM_PROGRESSO)
+      description: Acesso DONOR dono do item.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ngo_id]
+              properties:
+                ngo_id: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Negociação aberta
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Selection' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/ItemNotFound' }
+        '409':
+          description: ITEM_NOT_AVAILABLE, NGO_NOT_INTERESTED ou NGO_NOT_ACTIVE
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  # ───────────────────────── Módulo 4 — Chat, Encerramento & Denúncias ─────────────────────────
+  /chats:
+    get:
+      tags: [Chats]
+      summary: Listar minhas conversas
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [EM_PROGRESSO, DOADO] } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Conversas por atividade mais recente
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [total, data]
+                properties:
+                  total: { type: integer, minimum: 0 }
+                  data: { type: array, items: { $ref: '#/components/schemas/ChatSummary' } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /chats/{itemId}/messages:
+    parameters:
+      - $ref: '#/components/parameters/ItemId'
+    get:
+      tags: [Chats]
+      summary: Histórico da sala (e polling com ?after)
+      parameters:
+        - { name: after, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Estado do item e mensagens
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatRoom' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/ItemNotFound' }
+        '409': { $ref: '#/components/responses/ChatClosed' }
+    post:
+      tags: [Chats]
+      summary: Enviar mensagem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message: { type: string, minLength: 1, maxLength: 2000 }
+      responses:
+        '201':
+          description: Mensagem gravada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Message' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/ItemNotFound' }
+        '409': { $ref: '#/components/responses/ChatClosed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /items/{itemId}/confirm-receipt:
+    parameters:
+      - $ref: '#/components/parameters/ItemId'
+    post:
+      tags: [Chats]
+      summary: Confirmar recebimento (EM_PROGRESSO → DOADO)
+      description: Acesso NGO selecionada com status ATIVO.
+      responses:
+        '200':
+          description: Doação concluída
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [item_id, status, completed_at]
+                properties:
+                  item_id: { type: string, format: uuid }
+                  status: { type: string, const: DOADO }
+                  completed_at: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: FORBIDDEN ou NGO_NOT_APPROVED
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '404': { $ref: '#/components/responses/ItemNotFound' }
+        '409': { $ref: '#/components/responses/NotInProgress' }
+
+  /items/{itemId}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/ItemId'
+    post:
+      tags: [Chats]
+      summary: Cancelar negociação (EM_PROGRESSO → DISPONIVEL)
+      description: Acesso dono do item ou NGO selecionada.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, maxLength: 500 }
+      responses:
+        '200':
+          description: Item de volta à vitrine
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [item_id, previous_status, current_status, cancelled_by, message]
+                properties:
+                  item_id: { type: string, format: uuid }
+                  previous_status: { type: string, const: EM_PROGRESSO }
+                  current_status: { type: string, const: DISPONIVEL }
+                  cancelled_by: { type: string, enum: [DONOR, NGO] }
+                  message: { type: string }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/ItemNotFound' }
+        '409': { $ref: '#/components/responses/NotInProgress' }
+
+  /chats/{itemId}/report:
+    parameters:
+      - $ref: '#/components/parameters/ItemId'
+    post:
+      tags: [Reports]
+      summary: Denunciar a outra parte da negociação
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 10, maxLength: 1000 }
+      responses:
+        '201':
+          description: Denúncia aberta
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Report' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/ItemNotFound' }
+        '409':
+          description: ALREADY_REPORTED
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /admin/reports:
+    get:
+      tags: [Reports]
+      summary: Fila de denúncias (ADMIN)
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [ABERTA, RESOLVIDA], default: ABERTA } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Denúncias, mais antigas primeiro
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [total, data]
+                properties:
+                  total: { type: integer, minimum: 0 }
+                  data: { type: array, items: { $ref: '#/components/schemas/ReportSummary' } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/reports/{reportId}:
+    parameters:
+      - { name: reportId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Reports]
+      summary: Denúncia com conversa completa (ADMIN)
+      responses:
+        '200':
+          description: Denúncia, partes, eventos e todas as mensagens do item
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReportDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/ReportNotFound' }
+    patch:
+      tags: [Reports]
+      summary: Resolver denúncia (ADMIN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, const: RESOLVIDA }
+      responses:
+        '200':
+          description: Denúncia resolvida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Report' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/ReportNotFound' }
+
+  # ───────────────────────── Perfil ─────────────────────────
+  /profile:
+    patch:
+      tags: [Profile]
+      summary: Editar nome, cidade/UF e site (ONG)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                name: { type: string, minLength: 2, maxLength: 255 }
+                city: { type: string, minLength: 2, maxLength: 100 }
+                state: { $ref: '#/components/schemas/UF' }
+                website: { type: [string, 'null'], format: uri, description: 'Só ONG; null apaga' }
+              dependentRequired:
+                city: [state]
+                state: [city]
+      responses:
+        '200':
+          description: Perfil atualizado
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [Profile]
+      summary: Excluir a conta (anonimização)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, minLength: 1 }
+      responses:
+        '204': { description: Conta removida }
+        '400':
+          description: INVALID_CURRENT_PASSWORD ou VALIDATION_ERROR
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: HAS_ACTIVE_NEGOTIATIONS
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /profile/password:
+    patch:
+      tags: [Profile]
+      summary: Trocar senha (invalida tokens anteriores)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password: { type: string, minLength: 1 }
+                new_password: { type: string, minLength: 8, maxLength: 72 }
+      responses:
+        '204': { description: Senha alterada }
+        '400':
+          description: INVALID_CURRENT_PASSWORD, SAME_PASSWORD ou VALIDATION_ERROR
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /profile/ngo-document:
+    put:
+      tags: [Profile]
+      summary: Reenviar documento da ONG (volta para PENDENTE_APROVACAO)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [document]
+              properties:
+                document: { type: string, format: binary, description: 'PDF, JPG, PNG ou WEBP até 5 MB' }
+      responses:
+        '200':
+          description: Documento reenviado
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+        '400':
+          description: INVALID_DOCUMENT
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: NGO_ALREADY_ACTIVE
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  # ───────────────────────── Health (fora de /api/v1) ─────────────────────────
+  /health:
+    servers:
+      - url: http://localhost:3333
+      - url: https://<api>
+    get:
+      tags: [Health]
+      summary: Liveness — o processo está vivo
+      security: []
+      responses:
+        '200':
+          description: Processo respondendo
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, version, uptime_s]
+                properties:
+                  status: { type: string, const: ok }
+                  version: { type: string }
+                  uptime_s: { type: integer, minimum: 0 }
+
+  /health/ready:
+    servers:
+      - url: http://localhost:3333
+      - url: https://<api>
+    get:
+      tags: [Health]
+      summary: Readiness — banco respondendo em até 2 s
+      security: []
+      responses:
+        '200':
+          description: Pronto para receber tráfego
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Readiness' }
+        '503':
+          description: Banco indisponível
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Readiness' }
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+
+  parameters:
+    Limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 30 } }
+    Offset: { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+    ItemId: { name: itemId, in: path, required: true, schema: { type: string, format: uuid } }
+
+  responses:
+    Unauthorized:
+      description: UNAUTHORIZED
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Forbidden:
+      description: FORBIDDEN
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    ValidationError:
+      description: VALIDATION_ERROR
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    TooManyRequests:
+      description: TOO_MANY_REQUESTS
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    ItemNotFound:
+      description: ITEM_NOT_FOUND
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    ChatClosed:
+      description: CHAT_CLOSED
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    NotInProgress:
+      description: ITEM_NOT_IN_PROGRESS
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    ReportNotFound:
+      description: REPORT_NOT_FOUND
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  schemas:
+    # ── Comuns ──
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error: { type: string }
+        message: { type: string }
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              path: { type: string }
+              message: { type: string }
+
+    UF:
+      type: string
+      enum: [AC, AL, AP, AM, BA, CE, DF, ES, GO, MA, MT, MS, MG, PA, PB, PR, PE, PI, RJ, RN, RS, RO, RR, SC, SP, SE, TO]
+    Role: { type: string, enum: [DONOR, NGO, ADMIN] }
+    NgoStatus: { type: string, enum: [PENDENTE_APROVACAO, ATIVO, REJEITADO] }
+    Category: { type: string, enum: [ROUPAS, BRINQUEDOS, ALIMENTOS, LIVROS] }
+    ItemStatus: { type: string, enum: [DISPONIVEL, EM_PROGRESSO, DOADO] }
+
+    Readiness:
+      type: object
+      required: [status, version, checks]
+      properties:
+        status: { type: string, enum: [ok, error] }
+        version: { type: string }
+        checks:
+          type: object
+          properties:
+            database:
+              type: object
+              properties:
+                status: { type: string, enum: [ok, error] }
+                latency_ms: { type: integer, minimum: 0 }
+                error: { type: string }
+
+    # ── Módulo 1 ──
+    NgoProfile:
+      type: object
+      required: [id, cnpj, website, status, rejection_reason]
+      properties:
+        id: { type: string, format: uuid }
+        cnpj: { type: string, examples: ['12.345.678/0001-99'] }
+        website: { type: [string, 'null'], format: uri }
+        status: { $ref: '#/components/schemas/NgoStatus' }
+        rejection_reason: { type: [string, 'null'] }
+
+    User:
+      type: object
+      required: [id, name, email, role, city, state]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string, format: email }
+        role: { $ref: '#/components/schemas/Role' }
+        city: { type: string }
+        state: { $ref: '#/components/schemas/UF' }
+        ngo_profile: { $ref: '#/components/schemas/NgoProfile' }
+
+    AuthResponse:
+      type: object
+      required: [token, user]
+      properties:
+        token: { type: string }
+        user: { $ref: '#/components/schemas/User' }
+
+    AdminNgo:
+      type: object
+      properties:
+        ngo_profile_id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string, format: email }
+        city: { type: string }
+        state: { $ref: '#/components/schemas/UF' }
+        cnpj: { type: string }
+        website: { type: [string, 'null'], format: uri }
+        document_url: { type: string, format: uri, description: 'URL assinada, expira em 10 minutos' }
+        status: { $ref: '#/components/schemas/NgoStatus' }
+        rejection_reason: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+
+    # ── Módulo 2 ──
+    Photo:
+      type: object
+      required: [id, photo_url]
+      properties:
+        id: { type: string, format: uuid }
+        photo_url: { type: string, format: uri }
+
+    Item:
+      type: object
+      required: [id, donor_id, title, category, city, state, status, photos, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        donor_id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: [string, 'null'] }
+        category: { $ref: '#/components/schemas/Category' }
+        city: { type: string }
+        state: { type: string }
+        status: { $ref: '#/components/schemas/ItemStatus' }
+        selected_ngo_id: { type: [string, 'null'], format: uuid }
+        photos: { type: array, minItems: 3, maxItems: 3, items: { $ref: '#/components/schemas/Photo' } }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: [string, 'null'], format: date-time }
+
+    Donor:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, examples: ['Marina S.'] }
+
+    FeedItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: [string, 'null'] }
+        category: { $ref: '#/components/schemas/Category' }
+        city: { type: string }
+        state: { type: string }
+        status: { $ref: '#/components/schemas/ItemStatus' }
+        has_user_interest: { type: boolean }
+        interests_count: { type: integer, minimum: 0 }
+        is_selected: { type: boolean }
+        created_at: { type: string, format: date-time }
+        donor: { $ref: '#/components/schemas/Donor' }
+        photos: { type: array, minItems: 3, maxItems: 3, items: { type: string, format: uri } }
+
+    ItemDetail:
+      allOf:
+        - $ref: '#/components/schemas/Item'
+        - type: object
+          properties:
+            donor: { $ref: '#/components/schemas/Donor' }
+            has_user_interest: { type: boolean }
+            interests_count: { type: integer, minimum: 0 }
+            is_selected: { type: boolean }
+
+    ItemList:
+      type: object
+      required: [total, data]
+      properties:
+        total: { type: integer, minimum: 0 }
+        data: { type: array, items: { $ref: '#/components/schemas/FeedItem' } }
+
+    # ── Módulo 3 ──
+    Interest:
+      type: object
+      required: [id, item_id, ngo_id, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        item_id: { type: string, format: uuid }
+        ngo_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+
+    InterestedNgo:
+      type: object
+      required: [interest_id, ngo_id, name, city, state, cnpj, ngo_status, liked_at]
+      properties:
+        interest_id: { type: string, format: uuid }
+        ngo_id: { type: string, format: uuid }
+        name: { type: string }
+        city: { type: string }
+        state: { type: string }
+        cnpj: { type: string, examples: ['12.345.678/0001-99'] }
+        website: { type: [string, 'null'], format: uri }
+        ngo_status: { $ref: '#/components/schemas/NgoStatus' }
+        liked_at: { type: string, format: date-time }
+
+    InterestList:
+      type: object
+      required: [item_id, total, interested_ngos]
+      properties:
+        item_id: { type: string, format: uuid }
+        total: { type: integer, minimum: 0 }
+        interested_ngos: { type: array, items: { $ref: '#/components/schemas/InterestedNgo' } }
+
+    Selection:
+      type: object
+      required: [item_id, status, selected_ngo_id, chat_room_url]
+      properties:
+        item_id: { type: string, format: uuid }
+        status: { type: string, const: EM_PROGRESSO }
+        selected_ngo_id: { type: string, format: uuid }
+        chat_room_url: { type: string, examples: ['/chats/aa0e8400-e29b-41d4-a716-446655440333'] }
+
+    # ── Módulo 4 ──
+    Counterpart:
+      type: object
+      required: [id, name, role]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        role: { type: string, enum: [DONOR, NGO] }
+
+    ChatSummary:
+      type: object
+      required: [item_id, item_title, item_photo, item_status, counterpart, last_message]
+      properties:
+        item_id: { type: string, format: uuid }
+        item_title: { type: string }
+        item_photo: { type: string, format: uri }
+        item_status: { type: string, enum: [EM_PROGRESSO, DOADO] }
+        counterpart: { $ref: '#/components/schemas/Counterpart' }
+        last_message:
+          oneOf:
+            - type: 'null'
+            - type: object
+              properties:
+                message: { type: string }
+                sender_id: { type: string, format: uuid }
+                created_at: { type: string, format: date-time }
+
+    Message:
+      type: object
+      required: [id, item_id, sender_id, receiver_id, message, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        item_id: { type: string, format: uuid }
+        sender_id: { type: string, format: uuid }
+        receiver_id: { type: string, format: uuid }
+        message: { type: string }
+        created_at: { type: string, format: date-time }
+
+    ChatRoom:
+      type: object
+      required: [item, counterpart, messages]
+      properties:
+        item:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            title: { type: string }
+            status: { type: string, enum: [EM_PROGRESSO, DOADO] }
+            donor_id: { type: string, format: uuid }
+            selected_ngo_id: { type: [string, 'null'], format: uuid }
+        counterpart: { $ref: '#/components/schemas/Counterpart' }
+        messages: { type: array, items: { $ref: '#/components/schemas/Message' } }
+
+    Report:
+      type: object
+      required: [id, item_id, reporter_id, reported_id, reason, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        item_id: { type: string, format: uuid }
+        reporter_id: { type: string, format: uuid }
+        reported_id: { type: string, format: uuid }
+        reason: { type: string }
+        status: { type: string, enum: [ABERTA, RESOLVIDA] }
+        created_at: { type: string, format: date-time }
+
+    ReportSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [ABERTA, RESOLVIDA] }
+        reason: { type: string }
+        created_at: { type: string, format: date-time }
+        item:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            title: { type: string }
+            status: { $ref: '#/components/schemas/ItemStatus' }
+        reporter: { $ref: '#/components/schemas/Counterpart' }
+        reported: { $ref: '#/components/schemas/Counterpart' }
+
+    ReportDetail:
+      type: object
+      properties:
+        report:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            status: { type: string, enum: [ABERTA, RESOLVIDA] }
+            reason: { type: string }
+            created_at: { type: string, format: date-time }
+        item:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            title: { type: string }
+            status: { $ref: '#/components/schemas/ItemStatus' }
+            donor_id: { type: string, format: uuid }
+            selected_ngo_id: { type: [string, 'null'], format: uuid }
+        reporter:
+          allOf:
+            - $ref: '#/components/schemas/Counterpart'
+            - type: object
+              properties:
+                email: { type: string, format: email }
+        reported:
+          allOf:
+            - $ref: '#/components/schemas/Counterpart'
+            - type: object
+              properties:
+                email: { type: string, format: email }
+                ngo_profile_id: { type: [string, 'null'], format: uuid }
+        events:
+          type: array
+          items:
+            type: object
+            properties:
+              from_status: { type: [string, 'null'] }
+              to_status: { type: string }
+              actor_id: { type: [string, 'null'], format: uuid }
+              reason: { type: [string, 'null'] }
+              created_at: { type: string, format: date-time }
+        messages: { type: array, items: { $ref: '#/components/schemas/Message' } }
