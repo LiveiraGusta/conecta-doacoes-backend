@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { isoDate, optionalText, PaginationQuery, text, toIso, toIsoOrNull } from '../../core/dto';
-import type { RealtimeEvent } from '../../core/realtime';
+import type { RoomEvent } from '../../core/realtime';
 import type { ChatMessage, ChatSummary, Counterpart, Item, Role } from '../../types';
 
 // ── Entrada ──
@@ -50,8 +50,14 @@ export const ChatSummaryDto = z
     last_message: z
       .object({ message: z.string(), sender_id: z.uuid(), created_at: isoDate() })
       .nullable(),
+    unread_count: z.number().int().min(0),
   })
   .describe('ChatSummary');
+
+export const UnreadSummaryDto = z
+  .object({ unread_messages: z.number().int().min(0), unread_chats: z.number().int().min(0) })
+  .describe('UnreadSummary');
+export type UnreadSummaryDto = z.infer<typeof UnreadSummaryDto>;
 
 export const ChatListDto = z.object({ total: z.number().int().min(0), data: z.array(ChatSummaryDto) });
 export type ChatListDto = z.infer<typeof ChatListDto>;
@@ -111,6 +117,7 @@ export const toChatListDto = (page: { total: number; rows: ChatSummary[] }): Cha
       r.last_message !== null && r.last_sender_id && r.last_created_at
         ? { message: r.last_message, sender_id: r.last_sender_id, created_at: toIso(r.last_created_at) }
         : null,
+    unread_count: r.unread_count,
   })),
 });
 
@@ -156,6 +163,7 @@ export type WsServerMessage =
   | { type: 'pong' }
   | { type: 'error'; error: string; message: string; item_id?: string }
   | { type: 'message.created'; item_id: string; message: MessageDto }
+  | { type: 'unread.updated'; item_id: string; unread_count: number; unread_messages: number; unread_chats: number }
   | {
       type: 'item.status_changed';
       item_id: string;
@@ -166,7 +174,7 @@ export type WsServerMessage =
       completed_at: string | null;
     };
 
-export const toWsEvent = (e: RealtimeEvent): WsServerMessage =>
+export const toWsEvent = (e: RoomEvent): WsServerMessage =>
   e.type === 'message.created'
     ? { type: 'message.created', item_id: e.itemId, message: toMessageDto(e.message) }
     : {

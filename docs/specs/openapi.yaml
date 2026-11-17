@@ -462,6 +462,44 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /chats/unread:
+    get:
+      tags: [Chats]
+      summary: Total de mensagens não lidas (V1.1)
+      description: |
+        Para o badge do app. Conta as mensagens recebidas da outra parte da negociação atual, em conversas
+        EM_PROGRESSO e DOADO, depois da última leitura. Em tempo real, o WebSocket envia o evento `unread.updated`.
+      responses:
+        '200':
+          description: Totais de não lidas
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UnreadSummary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /chats/{itemId}/read:
+    parameters:
+      - $ref: '#/components/parameters/ItemId'
+    post:
+      tags: [Chats]
+      summary: Marcar a conversa como lida (V1.1)
+      description: |
+        Marca como lidas todas as mensagens recebidas até agora nesta conversa e devolve os totais atualizados.
+        Enviar uma mensagem também marca a conversa como lida para quem enviou. Mesmas regras de acesso da leitura
+        da sala (item DOADO permitido).
+      responses:
+        '200':
+          description: Conversa lida; totais atualizados
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UnreadSummary' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/ItemNotFound' }
+        '409': { $ref: '#/components/responses/ChatClosed' }
+
   /chats/{itemId}/messages:
     parameters:
       - $ref: '#/components/parameters/ItemId'
@@ -1054,7 +1092,7 @@ components:
 
     ChatSummary:
       type: object
-      required: [item_id, item_title, item_photo, item_status, counterpart, last_message]
+      required: [item_id, item_title, item_photo, item_status, counterpart, last_message, unread_count]
       properties:
         item_id: { type: string, format: uuid }
         item_title: { type: string }
@@ -1069,6 +1107,17 @@ components:
                 message: { type: string }
                 sender_id: { type: string, format: uuid }
                 created_at: { type: string, format: date-time }
+        unread_count:
+          type: integer
+          minimum: 0
+          description: Mensagens recebidas da outra parte depois da última leitura (V1.1)
+
+    UnreadSummary:
+      type: object
+      required: [unread_messages, unread_chats]
+      properties:
+        unread_messages: { type: integer, minimum: 0, description: Total de mensagens não lidas }
+        unread_chats: { type: integer, minimum: 0, description: Conversas com ao menos uma não lida }
 
     Message:
       type: object

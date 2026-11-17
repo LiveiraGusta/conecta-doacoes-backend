@@ -1,8 +1,8 @@
 import { EventEmitter } from 'node:events';
 import type { ChatMessage, ItemStatus, Role } from '../types';
 
-/** Eventos de domínio do chat, publicados pelos services depois do commit. */
-export type RealtimeEvent =
+/** Eventos de domínio de uma sala (item), publicados pelos services depois do commit. */
+export type RoomEvent =
   | { type: 'message.created'; itemId: string; message: ChatMessage }
   | {
       type: 'item.status_changed';
@@ -15,10 +15,17 @@ export type RealtimeEvent =
       completedAt: Date | null;
     };
 
+/** Eventos de um usuário, entregues em todas as conexões dele, inscritas ou não na sala. */
+export type UserEvent = { type: 'unread.changed'; userId: string; itemId: string };
+
+export type RealtimeEvent = RoomEvent | UserEvent;
+
 export interface RealtimeBus {
   publish(event: RealtimeEvent): void;
   /** Ouve os eventos de um item. Devolve a função que cancela a inscrição. */
-  subscribe(itemId: string, listener: (event: RealtimeEvent) => void): () => void;
+  subscribe(itemId: string, listener: (event: RoomEvent) => void): () => void;
+  /** Ouve os eventos de um usuário. Devolve a função que cancela a inscrição. */
+  subscribeUser(userId: string, listener: (event: UserEvent) => void): () => void;
 }
 
 /**
@@ -29,15 +36,20 @@ export interface RealtimeBus {
 export function createMemoryBus(): RealtimeBus {
   const emitter = new EventEmitter();
   emitter.setMaxListeners(0);
-  const channel = (itemId: string) => `item:${itemId}`;
+  const itemChannel = (itemId: string) => `item:${itemId}`;
+  const userChannel = (userId: string) => `user:${userId}`;
 
   return {
     publish(event) {
-      emitter.emit(channel(event.itemId), event);
+      emitter.emit(event.type === 'unread.changed' ? userChannel(event.userId) : itemChannel(event.itemId), event);
     },
     subscribe(itemId, listener) {
-      emitter.on(channel(itemId), listener);
-      return () => emitter.off(channel(itemId), listener);
+      emitter.on(itemChannel(itemId), listener);
+      return () => emitter.off(itemChannel(itemId), listener);
+    },
+    subscribeUser(userId, listener) {
+      emitter.on(userChannel(userId), listener);
+      return () => emitter.off(userChannel(userId), listener);
     },
   };
 }

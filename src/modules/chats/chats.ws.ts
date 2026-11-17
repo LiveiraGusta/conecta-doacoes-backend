@@ -8,7 +8,7 @@ import { toWsEvent, WsClientMessage, type WsServerMessage } from './chats.dto';
 import type { ChatsService } from './chats.service';
 
 export interface ChatsWsDeps {
-  service: Pick<ChatsService, 'authorizeSubscription'>;
+  service: Pick<ChatsService, 'authorizeSubscription' | 'unread'>;
   bus: RealtimeBus;
   findAuthContext(userId: string): Promise<AuthContext | null>;
   authTimeoutMs?: number;
@@ -46,6 +46,8 @@ export function chatsWebsocket(app: FastifyInstance, deps: ChatsWsDeps) {
     (socket: WebSocket, req) => {
       let user: AuthUser | null = null;
       const subscriptions = new Map<string, () => void>();
+      // Canal do próprio usuário (não lidas): vale para todas as conversas, inscritas ou não.
+      let unsubscribeUser: (() => void) | null = null;
       let alive = true;
 
       const send = (msg: WsServerMessage) => {
@@ -79,6 +81,7 @@ export function chatsWebsocket(app: FastifyInstance, deps: ChatsWsDeps) {
         clearTimeout(authTimer);
         clearInterval(heartbeat);
         for (const itemId of [...subscriptions.keys()]) drop(itemId);
+        unsubscribeUser?.();
       });
 
       async function authenticate(token: string) {
@@ -96,6 +99,21 @@ export function chatsWebsocket(app: FastifyInstance, deps: ChatsWsDeps) {
         const { passwordChangedAt: _ignored, ...current } = ctx;
         user = current;
         clearTimeout(authTimer);
+        if (socket.readyState !== socket.OPEN) return;
+        unsubscribeUser = deps.bus.subscribeUser(current.id, (event) => {
+          deps.service
+            .unread(current, event.itemId)
+            .then((u) =>
+              send({
+                type: 'unread.updated',
+                item_id: event.itemId,
+                unread_count: u.item_unread,
+                unread_messages: u.unread_messages,
+                unread_chats: u.unread_chats,
+              }),
+            )
+            .catch((err) => sendError(err, event.itemId));
+        });
         send({ type: 'ready', user_id: ctx.id });
       }
 

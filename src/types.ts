@@ -147,6 +147,12 @@ export interface ChatSummary {
   last_message: string | null;
   last_sender_id: string | null;
   last_created_at: Date | null;
+  unread_count: number;
+}
+
+export interface UnreadSummary {
+  unread_messages: number;
+  unread_chats: number;
 }
 
 export type ReportStatus = 'ABERTA' | 'RESOLVIDA';

@@ -49,10 +49,12 @@ function setup(over: { itemsRepo?: Partial<ChatsDeps['itemsRepo']>; chatsRepo?: 
       listPairMessages: async () => [],
       insertIfOpen: async () => null,
       findCounterpart: async (_q: unknown, id: string) => ({ id, name: 'Fulano', role: 'NGO' as const }),
+      markRead: async () => {},
+      unreadSummary: async () => ({ unread_messages: 0, unread_chats: 0, item_unread: 0 }),
       ...over.chatsRepo,
     } as ChatsRepository,
     eventsRepo,
-    bus: { publish: (e) => published.push(e), subscribe: () => () => {} },
+    bus: { publish: (e) => published.push(e), subscribe: () => () => {}, subscribeUser: () => () => {} },
   });
   return { service, published, eventsRepo };
 }
@@ -86,10 +88,16 @@ describe('chatsService.room', () => {
 });
 
 describe('chatsService.send', () => {
-  it('grava e publica message.created', async () => {
-    const { service, published } = setup({ chatsRepo: { insertIfOpen: async () => MSG } });
+  it('grava, marca como lido para quem enviou e avisa as duas partes', async () => {
+    const markRead = vi.fn(async () => {});
+    const { service, published } = setup({ chatsRepo: { insertIfOpen: async () => MSG, markRead } });
     await expect(service.send(DONOR, 'i1', 'Oi')).resolves.toBe(MSG);
-    expect(published).toEqual([{ type: 'message.created', itemId: 'i1', message: MSG }]);
+    expect(markRead).toHaveBeenCalledWith(expect.anything(), DONOR.id, 'i1');
+    expect(published).toEqual([
+      { type: 'message.created', itemId: 'i1', message: MSG },
+      { type: 'unread.changed', userId: NGO.id, itemId: 'i1' },
+      { type: 'unread.changed', userId: DONOR.id, itemId: 'i1' },
+    ]);
   });
 
   it.each([

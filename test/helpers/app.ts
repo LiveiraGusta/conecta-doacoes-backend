@@ -34,6 +34,6 @@ export async function closeTestApp(ctx: TestContext) {
 export async function resetDb(db: Db) {
   await db.sql.unsafe(`
     TRUNCATE users, ngo_profiles, items, item_photos, item_interests, chat_messages, item_events, reports,
-      password_resets
+      password_resets, chat_reads
     RESTART IDENTITY CASCADE`);
 }

@@ -30,6 +30,8 @@ cliente                                         API
   │◀──── {type:"message.created", ...} ───────────│  alguém enviou pelo REST
   │◀──── {type:"item.status_changed", ...} ───────│  confirmou (DOADO) ou cancelou (DISPONIVEL)
   │◀──── {type:"unsubscribed", reason:"chat_closed"} ─│  só depois de um cancelamento
+  │                                              │
+  │◀──── {type:"unread.updated", ...} ────────────│  V1.1: sem precisar de subscribe
 ```
 
 Uma conexão pode acompanhar até 50 salas ao mesmo tempo, por exemplo a lista de conversas inteira.
@@ -65,6 +67,11 @@ Uma conexão pode acompanhar até 50 salas ao mesmo tempo, por exemplo a lista d
   "completed_at": "ISO 8601" | null   // preenchido quando status = DOADO
 }
 
+// V1.1 — Não lidas mudaram (mensagem recebida, mensagem enviada ou conversa marcada como lida).
+// Chega em TODAS as conexões do usuário, inscritas ou não na sala: serve para o badge e para sincronizar abas.
+// Mesmos números de GET /chats (unread_count) e GET /chats/unread.
+{ "type": "unread.updated", "item_id": "uuid", "unread_count": 2, "unread_messages": 5, "unread_chats": 3 }
+
 // Erro de uma mensagem específica. A conexão continua aberta.
 { "type": "error", "error": "FORBIDDEN", "message": "texto pronto para a UI", "item_id": "uuid?" }
 ```
@@ -93,6 +100,7 @@ O servidor manda um `ping` de protocolo a cada 30 s e derruba conexões que não
 - **Quem pode se inscrever** segue a mesma regra de `GET /chats/:itemId/messages`: só o doador e a ONG selecionada, com o item `EM_PROGRESSO` ou `DOADO`.
 - **Cancelamento:** os dois lados recebem `item.status_changed` (`DISPONIVEL`) e em seguida `unsubscribed` com `chat_closed`. Se o doador escolher outra ONG depois, é uma sala nova, e cada lado precisa se inscrever de novo. Assim a ONG anterior não recebe nada da negociação seguinte.
 - **Doação concluída:** `DOADO` mantém a inscrição, porque o histórico continua legível, mas não chegam mais mensagens, já que o envio é recusado com `CHAT_CLOSED`.
+- **Não lidas (V1.1):** depois do `ready`, a conexão recebe `unread.updated` de todas as conversas do usuário, sem `subscribe`. Não lida é a mensagem recebida da outra parte da negociação atual depois da última leitura. Marcar como lida é pelo REST (`POST /chats/:itemId/read`), e enviar uma mensagem também marca a conversa como lida para quem enviou.
 - **Ordem e duplicatas:** o frontend deduplica as mensagens pelo `id`. Ao reconectar, busca o que perdeu com `GET /chats/:itemId/messages?after=<created_at da última mensagem>`.
 
 ## Uso recomendado no frontend
@@ -100,9 +108,10 @@ O servidor manda um `ping` de protocolo a cada 30 s e derruba conexões que não
 1. Abrir a sala e carregar o histórico com `GET /chats/:itemId/messages`.
 2. Conectar o WS, autenticar e se inscrever na sala.
 3. Enviar mensagens pelo `POST` e acrescentar na tela o que chegar em `message.created`, deduplicando pelo `id`.
-4. Se o WS cair: ativar o polling de 3 s com `?after=` e tentar reconectar com backoff (1 s, 2 s, 5 s, 10 s). Ao reconectar, desligar o polling.
+4. Com a sala aberta e visível, chamar `POST /chats/:itemId/read` ao abrir e a cada `message.created` recebido. O badge usa `GET /chats/unread` no boot e `unread.updated` depois.
+5. Se o WS cair: ativar o polling de 3 s com `?after=` e tentar reconectar com backoff (1 s, 2 s, 5 s, 10 s). Ao reconectar, desligar o polling.
 
 ## Limites desta versão
 
 - **Uma instância da API.** Os eventos circulam em memória (`core/realtime.ts`). Para escalar horizontalmente, a interface `RealtimeBus` recebe uma implementação com Redis ou Postgres `LISTEN/NOTIFY`, sem mudar o protocolo.
-- **Sem notificação fora da sala.** Avisos de mensagem não lida e push continuam na V1.1/V2.
+- **Sem push fora do app.** As não lidas chegam por `unread.updated` enquanto o app está aberto (V1.1). Notificação push (app fechado) continua na V2.

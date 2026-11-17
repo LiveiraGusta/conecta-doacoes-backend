@@ -39,5 +39,5 @@ Para a distribuição, a alternativa era Postgres `LISTEN/NOTIFY`. Ela funciona 
 - Escalar para mais de uma instância exige trocar o `RealtimeBus` (e o contador do rate limit) por Redis.
 
 **A revisitar:**
-- Notificação fora da sala aberta (mensagens não lidas), quando entrar a V1.1.
+- ~~Notificação fora da sala aberta (mensagens não lidas), quando entrar a V1.1.~~ Feito na V1.1: evento `unread.updated` num canal por usuário do `RealtimeBus`, sem `subscribe`.
 - Implementação do `RealtimeBus` com Redis se a API passar a rodar com mais de uma instância.
