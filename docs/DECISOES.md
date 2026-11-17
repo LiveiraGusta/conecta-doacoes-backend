@@ -142,3 +142,10 @@ Mudanças pedidas no planejamento do frontend React. O plano e o registro comple
 | 0.2b-3 | `avatar_url` também no doador do feed/detalhe, nas ONGs interessadas e na contraparte do chat | Usuário | Aditivo. Nas denúncias do Admin, `Counterpart` continua sem foto (o campo é opcional no openapi) |
 | 0.2b-3 | O feed do visitante reaproveita `findFeed` sem cidade/UF e um id de visitante que nunca existe | Claude | Uma consulta só para os dois modos; `has_user_interest` sempre `false` para o visitante |
 | 0.2b-3 | Fim da fase 0: o backend tem tudo o que o plano do frontend pede | Claude | Próximo passo: fase 1a do frontend |
+
+## Operação
+
+| Fase | Decisão | Quem tomou | Consequência |
+| --- | --- | --- | --- |
+| Logs | Log de acesso próprio: uma linha `acesso` por requisição (método, URL, rota, status, tempo, IP, user-agent, `userId`), no lugar do par "incoming request"/"request completed" do Fastify | Claude | Metade das linhas e já com o usuário. 5xx sai como `error`, 4xx como `warn`; health check só em `debug`. Corpo, cookie e `Authorization` nunca entram |
+| Logs | stdout sempre (JSON); arquivo opcional com `LOG_FILE_DIR`, via `pino-roll` (rotação diária ou por tamanho, retenção de 14 arquivos) | Claude | A gravação roda numa worker thread do pino. Em produção no Render o disco é efêmero: guardar os logs por um *Log Stream* do painel (Better Stack, Datadog…), sem mudar código |

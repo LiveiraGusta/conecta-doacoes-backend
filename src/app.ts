@@ -18,6 +18,7 @@ import { createLogMailer, createResendMailer, type Mailer } from './core/email';
 import { allowedOrigins, env } from './core/env';
 import { AppError } from './core/errors';
 import { errorPlugin } from './core/errors/handler';
+import { accessLogPlugin, loggerOptions } from './core/logger';
 import { bcryptHasher } from './core/passwords';
 import { createMemoryBus, type RealtimeBus } from './core/realtime';
 import { SESSION_COOKIE } from './core/session-cookie';
@@ -81,13 +82,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   const bus = opts.bus ?? createMemoryBus();
 
   const app = Fastify({
-    logger:
-      opts.logger === false
-        ? false
-        : {
-            level: env.LOG_LEVEL,
-            redact: ['req.headers.cookie', 'req.body.password', 'req.body.new_password', 'req.body.token'],
-          },
+    logger: opts.logger === false ? false : loggerOptions(),
+    // O log de acesso (uma linha por requisição) vem do accessLogPlugin.
+    disableRequestLogging: true,
     trustProxy: env.TRUST_PROXY,
     bodyLimit: env.BODY_LIMIT_MB * 1024 * 1024,
     connectionTimeout: 10_000,
@@ -95,6 +92,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   });
 
   if (opts.onRoute) app.addHook('onRoute', opts.onRoute);
+  if (opts.logger !== false) await app.register(accessLogPlugin);
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 

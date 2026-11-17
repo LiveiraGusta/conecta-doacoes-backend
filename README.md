@@ -47,6 +47,8 @@ Todas são lidas e validadas uma única vez em [src/core/env.ts](src/core/env.ts
 | `JWT_EXPIRES_IN` | não | `7d` | Validade do token |
 | `PORT` / `HOST` | não | `3333` / `0.0.0.0` | |
 | `LOG_LEVEL` | não | `info` | |
+| `LOG_FILE_DIR` | não | vazio / `logs` | Vazio: logs só no stdout. Com uma pasta, também grava `api.<data>.<n>.log` com rotação diária. Em produção no Render, deixe vazio (o disco é apagado a cada deploy) e use um *Log Stream* |
+| `LOG_FILE_RETENTION` / `LOG_FILE_MAX_SIZE` | não | `14` / `20m` | Arquivos antigos guardados / tamanho que força a rotação |
 | `TRUST_PROXY` | não | `false` | `true` atrás do proxy do Render/Railway, para o rate limit ver o IP real |
 | `SWAGGER_ENABLED` | não | `false` | `/docs`; deixe desligado em produção |
 | `RESEND_API_KEY` | em produção | `re_...` | Envio do e-mail de recuperação de senha. Sem ela (só fora de produção), o e-mail com o link sai no log |

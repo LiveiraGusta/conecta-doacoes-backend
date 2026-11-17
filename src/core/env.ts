@@ -8,6 +8,10 @@ const Env = z.object({
   PORT: z.coerce.number().int().default(3333),
   HOST: z.string().default('0.0.0.0'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'silent']).default('info'),
+  // Vazio = só stdout. Com uma pasta (ex.: logs), também grava em arquivo com rotação (src/core/logger.ts).
+  LOG_FILE_DIR: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
+  LOG_FILE_RETENTION: z.coerce.number().int().min(1).default(14), // arquivos guardados além do atual
+  LOG_FILE_MAX_SIZE: z.string().regex(/^\d+[kmg]$/, 'Use um número seguido de k, m ou g (ex.: 20m)').default('20m'),
   TRUST_PROXY: bool.default(false),
   DATABASE_URL: z.url(),
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).default(10),
