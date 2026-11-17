@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../../core/db';
 import { AppError } from '../../core/errors';
-import { detectFileKind, MIME } from '../../core/images';
+import { detectFileKind, MIME, toProfileWebp, type ProfileImageKind } from '../../core/images';
 import type { PasswordHasher } from '../../core/passwords';
 import type { Storage } from '../../core/storage';
 import type { AuthUser, Category, UserPreferences, UserWithProfile } from '../../types';
@@ -48,7 +48,52 @@ export const createProfileService = ({ db, profileRepo, authRepo, storage, hashe
     if (!(await hasher.compare(password, user.password_hash))) throw new AppError('INVALID_CURRENT_PASSWORD');
   }
 
+  /** Remove do bucket público um arquivo pela URL; falha só vai para o vazio (o banco já está certo). */
+  const removePublic = async (url: string | null | undefined) => {
+    const path = url ? storage.pathFromPublicUrl(url) : null;
+    if (path) await storage.remove('items', [path]).catch(() => {});
+  };
+
+  /**
+   * Sobe a imagem nova, grava a URL e só então apaga a antiga. Se gravar falhar, a nova é apagada.
+   * Avatar: doador e ONG. Banner: só ONG (a rota já barra os outros perfis).
+   */
+  async function replaceProfileImage(user: AuthUser, kind: ProfileImageKind, files: Buffer[]): Promise<UserWithProfile> {
+    if (files.length !== 1) throw new AppError('INVALID_PHOTO');
+    const webp = await toProfileWebp(files[0]!, kind);
+    const path = `profiles/${user.id}/${kind}-${randomUUID()}.webp`;
+    await storage.upload('items', path, webp, 'image/webp');
+    const url = storage.publicUrl(path);
+
+    let old: string | null;
+    try {
+      old =
+        kind === 'avatar'
+          ? await profileRepo.setAvatarUrl(db.sql, user.id, url)
+          : await profileRepo.setBannerUrl(db.sql, user.id, url);
+    } catch (err) {
+      await storage.remove('items', [path]).catch(() => {});
+      throw err;
+    }
+    await removePublic(old);
+    return loadSelf(user.id);
+  }
+
+  async function clearProfileImage(user: AuthUser, kind: ProfileImageKind): Promise<UserWithProfile> {
+    const old =
+      kind === 'avatar'
+        ? await profileRepo.setAvatarUrl(db.sql, user.id, null)
+        : await profileRepo.setBannerUrl(db.sql, user.id, null);
+    await removePublic(old);
+    return loadSelf(user.id);
+  }
+
   return {
+    setAvatar: (user: AuthUser, files: Buffer[]) => replaceProfileImage(user, 'avatar', files),
+    removeAvatar: (user: AuthUser) => clearProfileImage(user, 'avatar'),
+    setBanner: (user: AuthUser, files: Buffer[]) => replaceProfileImage(user, 'banner', files),
+    removeBanner: (user: AuthUser) => clearProfileImage(user, 'banner'),
+
     /**
      * Nome, cidade/UF e descrição; a ONG também edita site, contato, categorias aceitas e endereço.
      * Mudar a cidade muda o feed na hora; os itens já publicados não mudam.
@@ -147,7 +192,11 @@ export const createProfileService = ({ db, profileRepo, authRepo, storage, hashe
       });
 
       // Arquivos saem depois do commit; falha aqui não desfaz a exclusão.
-      const photoPaths = photoUrls.map((u) => storage.pathFromPublicUrl(u)).filter((p): p is string => Boolean(p));
+      // A foto de perfil e o banner saem junto: a conta anonimizada não guarda imagem da pessoa.
+      const profileImages = [self.avatar_url, self.ngo_profile?.banner_url].filter((u): u is string => Boolean(u));
+      const photoPaths = [...photoUrls, ...profileImages]
+        .map((u) => storage.pathFromPublicUrl(u))
+        .filter((p): p is string => Boolean(p));
       await storage.remove('items', photoPaths).catch(() => {});
       if (documentPath) await storage.remove('docs', [documentPath]).catch(() => {});
     },

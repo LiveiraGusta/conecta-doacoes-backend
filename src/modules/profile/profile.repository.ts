@@ -28,6 +28,26 @@ export const profileRepository = {
     await q`UPDATE ngo_profiles SET website = ${website} WHERE user_id = ${userId}`;
   },
 
+  /** Troca a URL da foto de perfil e devolve a anterior (para apagar do Storage depois do commit). */
+  async setAvatarUrl(q: Queryable, userId: string, url: string | null): Promise<string | null> {
+    const [row] = await q<{ old: string | null }[]>`
+      UPDATE users u SET avatar_url = ${url}, updated_at = NOW()
+      FROM (SELECT avatar_url AS old FROM users WHERE id = ${userId} FOR UPDATE) prev
+      WHERE u.id = ${userId}
+      RETURNING prev.old`;
+    return row?.old ?? null;
+  },
+
+  /** Troca a URL do banner da ONG e devolve a anterior. */
+  async setBannerUrl(q: Queryable, userId: string, url: string | null): Promise<string | null> {
+    const [row] = await q<{ old: string | null }[]>`
+      UPDATE ngo_profiles np SET banner_url = ${url}
+      FROM (SELECT banner_url AS old FROM ngo_profiles WHERE user_id = ${userId} FOR UPDATE) prev
+      WHERE np.user_id = ${userId}
+      RETURNING prev.old`;
+    return row?.old ?? null;
+  },
+
   async updateBio(q: Queryable, userId: string, bio: string | null): Promise<void> {
     await q`UPDATE users SET bio = ${bio}, updated_at = NOW() WHERE id = ${userId}`;
   },
@@ -109,6 +129,8 @@ export const profileRepository = {
         name = 'Usuário removido',
         email = 'removido+' || id || '@conectadoacoes.invalid',
         password_hash = '!',
+        bio = NULL,
+        avatar_url = NULL,
         deleted_at = NOW(),
         updated_at = NOW()
       WHERE id = ${userId}`;

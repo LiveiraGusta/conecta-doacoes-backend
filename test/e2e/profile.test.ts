@@ -1,3 +1,4 @@
+import sharp from 'sharp';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { User } from '../../src/types';
 import { buildTestApp, closeTestApp, resetDb, type TestContext } from '../helpers/app';
@@ -10,6 +11,7 @@ import {
   createItem,
   createNgo,
   PASSWORD,
+  imageBuffer,
   pdfBuffer,
   sessionCookie,
   tokenFromResponse,
@@ -190,6 +192,107 @@ describe('V1.1 — Perfil', () => {
       await call('PATCH', '/profile/preferences', donor, { theme_color: 'ROXO' });
       const [row] = await ctx.db.sql`SELECT count(*)::int AS n FROM user_preferences WHERE user_id = ${donor.id}`;
       expect(row!.n).toBe(1);
+    });
+  });
+
+  describe('foto de perfil e banner', () => {
+    const upload = (kind: 'avatar' | 'banner', who: Who, content: Buffer, field: string = kind) => {
+      const body = multipart({}, [{ field, filename: 'imagem.png', content, contentType: 'image/png' }]);
+      return ctx.app.inject({
+        method: 'PUT',
+        url: `/api/v1/profile/${kind}`,
+        payload: body.payload,
+        headers: { ...body.headers, ...authHeader(ctx.app, who) },
+      });
+    };
+
+    /** Arquivo gravado no bucket a partir da URL pública. */
+    const storedOf = (url: string) => ctx.storage.files.get(`items/${ctx.storage.pathFromPublicUrl(url)!}`);
+
+    it('avatar: qualquer proporção vira WEBP 512×512 em profiles/<id>/; trocar apaga o antigo', async () => {
+      const wide = await sharp({ create: { width: 900, height: 300, channels: 3, background: '#0af' } }).png().toBuffer();
+      const res = await upload('avatar', donor, wide);
+      expect(res.statusCode).toBe(200);
+      await expectContract(res, 'PUT', '/profile/avatar');
+      const first = res.json().user.avatar_url as string;
+      expect(first).toMatch(new RegExp(`/items/profiles/${donor.id}/avatar-[0-9a-f-]+\\.webp$`));
+      const file = storedOf(first)!;
+      expect(file.contentType).toBe('image/webp');
+      expect(await sharp(file.body).metadata()).toMatchObject({ format: 'webp', width: 512, height: 512 });
+
+      const second = (await upload('avatar', donor, await imageBuffer('png', 64))).json().user.avatar_url as string;
+      expect(second).not.toBe(first);
+      expect(storedOf(first)).toBeUndefined();
+      expect(storedOf(second)).toBeDefined();
+      expect((await call('GET', '/auth/me', donor)).json().user.avatar_url).toBe(second);
+    });
+
+    it('DELETE /profile/avatar volta para null e apaga o arquivo (idempotente)', async () => {
+      const url = (await upload('avatar', donor, await imageBuffer('png', 64))).json().user.avatar_url as string;
+      const res = await call('DELETE', '/profile/avatar', donor);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().user.avatar_url).toBeNull();
+      await expectContract(res, 'DELETE', '/profile/avatar');
+      expect(storedOf(url)).toBeUndefined();
+      expect((await call('DELETE', '/profile/avatar', donor)).statusCode).toBe(200);
+    });
+
+    it('banner: só ONG; vira WEBP 1500×500 e aparece em ngo_profile.banner_url', async () => {
+      const ngo = await createNgo(ctx.db);
+      const res = await upload('banner', ngo, await imageBuffer('jpeg', 200));
+      expect(res.statusCode).toBe(200);
+      await expectContract(res, 'PUT', '/profile/banner');
+      const url = res.json().user.ngo_profile.banner_url as string;
+      expect(await sharp(storedOf(url)!.body).metadata()).toMatchObject({ width: 1500, height: 500 });
+
+      const cleared = await call('DELETE', '/profile/banner', ngo);
+      expect(cleared.json().user.ngo_profile.banner_url).toBeNull();
+      expect(storedOf(url)).toBeUndefined();
+
+      expect((await upload('banner', donor, await imageBuffer('png', 64))).statusCode).toBe(403);
+      expect((await call('DELETE', '/profile/banner', donor)).statusCode).toBe(403);
+    });
+
+    it('400 INVALID_PHOTO para PDF, campo errado ou 2 arquivos; 413 acima de 5 MB; nada fica no bucket', async () => {
+      const pdf = await upload('avatar', donor, pdfBuffer());
+      expect(pdf.statusCode).toBe(400);
+      expect(pdf.json().error).toBe('INVALID_PHOTO');
+      await expectContract(pdf, 'PUT', '/profile/avatar');
+
+      expect((await upload('avatar', donor, await imageBuffer('png', 64), 'foto')).json().error).toBe('INVALID_PHOTO');
+
+      const png = await imageBuffer('png', 64);
+      const two = multipart({}, [
+        { field: 'avatar', filename: 'a.png', content: png, contentType: 'image/png' },
+        { field: 'avatar', filename: 'b.png', content: png, contentType: 'image/png' },
+      ]);
+      const res2 = await ctx.app.inject({
+        method: 'PUT',
+        url: '/api/v1/profile/avatar',
+        payload: two.payload,
+        headers: { ...two.headers, ...authHeader(ctx.app, donor) },
+      });
+      expect(res2.json().error).toBe('INVALID_PHOTO');
+
+      const big = await upload('avatar', donor, Buffer.concat([png, Buffer.alloc(5 * 1024 * 1024)]));
+      expect(big.statusCode).toBe(413);
+      expect(big.json().error).toBe('PAYLOAD_TOO_LARGE');
+
+      expect(ctx.storage.files.size).toBe(0);
+      expect((await call('GET', '/auth/me', donor)).json().user.avatar_url).toBeNull();
+    });
+
+    it('excluir a conta apaga a foto de perfil e o banner, e limpa bio e avatar', async () => {
+      const ngo = await createNgo(ctx.db);
+      await call('PATCH', '/profile', ngo, { bio: 'Sobre a ONG' });
+      const avatar = (await upload('avatar', ngo, await imageBuffer('png', 64))).json().user.avatar_url as string;
+      const banner = (await upload('banner', ngo, await imageBuffer('png', 64))).json().user.ngo_profile.banner_url as string;
+
+      expect((await call('DELETE', '/profile', ngo, { password: PASSWORD })).statusCode).toBe(204);
+      expect(storedOf(avatar)).toBeUndefined();
+      expect(storedOf(banner)).toBeUndefined();
+      const [row] = await ctx.db.sql`SELECT bio, avatar_url FROM users WHERE id = ${ngo.id}`;
+      expect(row).toEqual({ bio: null, avatar_url: null });
     });
   });
 

@@ -1,3 +1,4 @@
+import sharp from 'sharp';
 import { describe, expect, it, vi } from 'vitest';
 import { fakeDb } from '../../../test/helpers/fake-db';
 import { fakeStorage } from '../../../test/helpers/fake-storage';
@@ -92,6 +93,22 @@ describe('profileService.update', () => {
     await service.update(NGO, { website: null });
     expect(profileRepo.updateWebsite).toHaveBeenCalledWith(expect.anything(), 'n1', null);
     expect(profileRepo.updateUser).not.toHaveBeenCalled();
+  });
+});
+
+describe('profileService foto de perfil', () => {
+  const png = () => sharp({ create: { width: 40, height: 20, channels: 3, background: '#0af' } }).png().toBuffer();
+
+  it('se gravar a URL falhar, a imagem nova sai do bucket e o erro sobe', async () => {
+    const { service, storage } = setup({ setAvatarUrl: vi.fn(async () => { throw new Error('banco fora'); }) });
+    await expect(service.setAvatar(DONOR, [await png()])).rejects.toThrow('banco fora');
+    expect(storage.files.size).toBe(0);
+  });
+
+  it('INVALID_PHOTO sem arquivo ou com 2', async () => {
+    const { service } = setup();
+    await expect(service.setAvatar(DONOR, [])).rejects.toMatchObject({ code: 'INVALID_PHOTO' });
+    await expect(service.setAvatar(DONOR, [await png(), await png()])).rejects.toMatchObject({ code: 'INVALID_PHOTO' });
   });
 });
 

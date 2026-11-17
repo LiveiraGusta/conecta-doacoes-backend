@@ -19,6 +19,8 @@ export interface User {
   state: string;
   /** Descrição da página pessoal (até 500). */
   bio?: string | null;
+  /** URL pública da foto de perfil (512×512). */
+  avatar_url?: string | null;
   created_at: Date;
   updated_at?: Date | null;
   password_changed_at?: Date | null;
@@ -33,6 +35,8 @@ export interface NgoProfile {
   document_url: string; // caminho no bucket privado
   status: NgoStatus;
   rejection_reason: string | null;
+  /** URL pública do banner (1500×500). */
+  banner_url?: string | null;
   /** Só dígitos, com DDD (10 ou 11). */
   phone?: string | null;
   /** Usuário do Instagram, sem @. */

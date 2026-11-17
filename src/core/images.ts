@@ -22,6 +22,31 @@ export function detectFileKind(buf: Buffer): FileKind | null {
   return null;
 }
 
+/** Tamanho final de cada imagem de perfil: o front recorta, e o backend garante a proporção. */
+export const PROFILE_IMAGE_SIZE = {
+  avatar: { width: 512, height: 512 },
+  banner: { width: 1500, height: 500 },
+} as const;
+export type ProfileImageKind = keyof typeof PROFILE_IMAGE_SIZE;
+
+/**
+ * Foto de perfil ou banner: só JPG/PNG/WEBP, rotação EXIF, corte ao centro na proporção certa
+ * (fit cover) no tamanho exato, WEBP q80 sem metadados.
+ */
+export async function toProfileWebp(buf: Buffer, kind: ProfileImageKind): Promise<Buffer> {
+  const type = detectFileKind(buf);
+  if (type !== 'jpg' && type !== 'png' && type !== 'webp') throw new AppError('INVALID_PHOTO');
+  try {
+    return await sharp(buf, { failOn: 'error' })
+      .rotate()
+      .resize({ ...PROFILE_IMAGE_SIZE[kind], fit: 'cover', position: 'centre' })
+      .webp({ quality: 80 })
+      .toBuffer();
+  } catch {
+    throw new AppError('INVALID_PHOTO');
+  }
+}
+
 /**
  * Valida e normaliza uma foto de item: só JPG/PNG/WEBP, aplica a rotação EXIF,
  * limita o maior lado a 1600 px e converte para webp q80 sem metadados.

@@ -125,3 +125,10 @@ Mudanças pedidas no planejamento do frontend React. O plano e o registro comple
 | 0.2b-1 | Colunas de avatar e banner ficam para a migração da 0.2b-2, e não na 008 como dizia o plano | Claude | Cada sub-fase traz a sua migração e os seus testes |
 | 0.2b-1 | O teste de contrato aceita propriedades extras nas respostas (não pegou os campos novos antes do openapi) | Claude | Reforça o item do plano: os schemas das rotas públicas (0.2b-3) terão `additionalProperties: false` |
 | 0.2b-1 | O seed de demonstração ganhou descrição, contato, endereço e categorias na ONG ativa, e `show_donations` na doadora | Claude | O frontend tem dados para a página pessoal. O seed não foi rodado de novo no banco de dev |
+| 0.2b-2 | Foto de perfil (doador e ONG) e banner (só ONG), com `PUT`/`DELETE` em `/profile/avatar` e `/profile/banner` (migração 009) | Usuário | Resposta `{ user }`. `DELETE` idempotente |
+| 0.2b-2 | Arquivos no bucket público de itens, pasta `profiles/<user_id>/` | Usuário | Sem configuração nova no Supabase. O nome do bucket fica menos semântico |
+| 0.2b-2 | A API também garante a proporção: corte ao centro (fit cover) em 512×512 e 1500×500, WEBP q80 sem metadados | Usuário | Mesmo um envio fora da proporção, direto pela API, fica certo na tela |
+| 0.2b-2 | Limite de 5 MB, igual às fotos de item; `400 INVALID_PHOTO` e `413 PAYLOAD_TOO_LARGE` | Usuário | Rate limit de 10 envios por minuto, por usuário |
+| 0.2b-2 | Guardar a URL pública (`avatar_url`, `banner_url`), como em `item_photos`, e não o caminho | Claude | Reaproveita `publicUrl`/`pathFromPublicUrl`. O plano falava em `avatar_path` |
+| 0.2b-2 | Trocar sobe a nova, grava a URL e só então apaga a antiga; se gravar falhar, a nova é apagada | Claude | Nunca fica um usuário apontando para arquivo inexistente. Coberto por teste unitário |
+| 0.2b-2 | Excluir a conta também apaga a foto de perfil e o banner, e limpa `bio` e `avatar_url` | Claude | A anonimização não deixa imagem nem descrição da pessoa |

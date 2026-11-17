@@ -102,12 +102,13 @@ describe('Módulo 1 — Autenticação', () => {
         website: 'https://ongsalvadora.org.br',
         status: 'PENDENTE_APROVACAO',
         rejection_reason: null,
+        banner_url: null,
         phone: null,
         instagram: null,
         accepted_categories: [],
         address: null,
       });
-      expect(user).toMatchObject({ bio: null, preferences: { theme_color: 'AZUL', theme_mode: 'SYSTEM', show_donations: false } });
+      expect(user).toMatchObject({ bio: null, avatar_url: null, preferences: { theme_color: 'AZUL', theme_mode: 'SYSTEM', show_donations: false } });
       expect([...ctx.storage.files.keys()][0]).toMatch(new RegExp(`^docs/${user.id}/[0-9a-f-]+\\.pdf$`));
       await expectContract(res, 'POST', '/auth/register/ngo');
     });

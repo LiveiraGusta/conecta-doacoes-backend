@@ -3,7 +3,7 @@
 > **Para quem é:** uma IA (ou um dev) que vai construir o frontend consumindo esta API.
 > O guia é organizado por **fluxos de ponta a ponta**, na ordem em que o usuário passa por eles.
 > Para o detalhe de cada rota, os schemas são a fonte da verdade:
-> - REST: [`specs/openapi.yaml`](specs/openapi.yaml) (34 rotas, OpenAPI 3.1)
+> - REST: [`specs/openapi.yaml`](specs/openapi.yaml) (40 rotas, OpenAPI 3.1)
 > - Tempo real: [`specs/Spec do Chat em Tempo Real — WebSocket.md`](specs/Spec%20do%20Chat%20em%20Tempo%20Real%20—%20WebSocket.md)
 >
 > Versão da API coberta: **MVP (V1.0) + V1.1** (perfil, recuperação de senha, denúncias, mensagens não lidas) **+ sessão por cookie httpOnly** ([ADR-13](adr/ADR-13-sessao-cookie.md)).
@@ -367,6 +367,11 @@ Peça confirmação nos dois botões ("Tem certeza?"): as duas ações são defi
   | `address` | ONG | `{ cep, street, number, complement?, neighborhood }` completo, ou `null` para apagar. O CEP volta só com dígitos. Para autopreencher, consulte o ViaCEP no front e mande o objeto pronto |
 
   Um doador que envia campo de ONG recebe `400 VALIDATION_ERROR`, com um item em `details` por campo.
+- **Foto de perfil e banner:** `PUT /profile/avatar` (doador e ONG; multipart, campo `avatar`) e `PUT /profile/banner` (só ONG; campo `banner`) → `200 { user }`.
+  - 1 arquivo JPG, PNG ou WEBP de até 5 MB. A API corta ao centro e grava WEBP: avatar 512×512 e banner 1500×500. Recorte no front com a mesma proporção (1:1 e 3:1) para o usuário escolher o enquadramento.
+  - A URL nova vem em `user.avatar_url` e em `user.ngo_profile.banner_url`. A imagem anterior é apagada.
+  - `DELETE /profile/avatar` e `DELETE /profile/banner` → `200 { user }`, com o campo `null` (idempotente). Sem avatar, mostre as iniciais.
+  - Erros: `400 INVALID_PHOTO` (tipo errado, campo errado ou mais de 1 arquivo), `413 PAYLOAD_TOO_LARGE` e `429` (10 por minuto).
 - **Preferências:** vêm em `user.preferences` e em `GET /profile/preferences` → `{ theme_color, theme_mode, show_donations }`. Os padrões são `AZUL`, `SYSTEM` e `false`.
   - `PATCH /profile/preferences` com qualquer combinação → `200` com as preferências completas. Vale também para o ADMIN.
   - `theme_color`: `AZUL`, `VERDE`, `ROXO`, `LARANJA` ou `ROSA`. `theme_mode`: `LIGHT`, `DARK` ou `SYSTEM` (siga o `prefers-color-scheme`).
@@ -377,7 +382,7 @@ Peça confirmação nos dois botões ("Tem certeza?"): as duas ações são defi
   - `400 INVALID_CURRENT_PASSWORD`, `400 SAME_PASSWORD`, `429` (5 por minuto).
 - **Excluir conta:** `DELETE /profile` `{ "password": "..." }` → `204`, e a API apaga o cookie. Limpe o estado do usuário e vá para a tela inicial.
   - `409 HAS_ACTIVE_NEGOTIATIONS`: o usuário precisa concluir ou cancelar as negociações em andamento antes.
-  - Explique as consequências na confirmação: a conta é anonimizada. Para o doador, os itens disponíveis são apagados; para a ONG, os interesses em itens abertos somem. O histórico de doações concluídas fica, com o nome "Usuário removido".
+  - Explique as consequências na confirmação: a conta é anonimizada (descrição, foto de perfil e banner são apagados). Para o doador, os itens disponíveis são apagados; para a ONG, os interesses em itens abertos somem. O histórico de doações concluídas fica, com o nome "Usuário removido".
 
 ---
 

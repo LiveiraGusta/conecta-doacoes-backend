@@ -814,6 +814,108 @@ paths:
           description: HAS_ACTIVE_NEGOTIATIONS
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
 
+  /profile/avatar:
+    put:
+      tags: [Profile]
+      summary: Enviar foto de perfil (DONOR e NGO)
+      description: |
+        multipart/form-data com **1 arquivo** no campo `avatar` (JPG, PNG ou WEBP, até 5 MB; o tipo é conferido
+        pelo conteúdo). A API corta ao centro na proporção certa e grava WEBP 512×512. A imagem anterior é apagada.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [avatar]
+              properties:
+                avatar: { type: string, format: binary }
+      responses:
+        '200':
+          description: Imagem trocada
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+        '400':
+          description: INVALID_PHOTO (tipo inválido, nenhum arquivo no campo `avatar` ou mais de um)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413':
+          description: PAYLOAD_TOO_LARGE (arquivo acima de 5 MB)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [Profile]
+      summary: Remover foto de perfil (DONOR e NGO; idempotente)
+      responses:
+        '200':
+          description: Imagem removida
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /profile/banner:
+    put:
+      tags: [Profile]
+      summary: Enviar banner da ONG (só NGO)
+      description: |
+        multipart/form-data com **1 arquivo** no campo `banner` (JPG, PNG ou WEBP, até 5 MB; o tipo é conferido
+        pelo conteúdo). A API corta ao centro na proporção certa e grava WEBP 1500×500. A imagem anterior é apagada.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [banner]
+              properties:
+                banner: { type: string, format: binary }
+      responses:
+        '200':
+          description: Imagem trocada
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+        '400':
+          description: INVALID_PHOTO (tipo inválido, nenhum arquivo no campo `banner` ou mais de um)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413':
+          description: PAYLOAD_TOO_LARGE (arquivo acima de 5 MB)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [Profile]
+      summary: Remover banner da ONG (só NGO; idempotente)
+      responses:
+        '200':
+          description: Imagem removida
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /profile/preferences:
     get:
       tags: [Profile]
@@ -1044,13 +1146,14 @@ components:
 
     NgoProfile:
       type: object
-      required: [id, cnpj, website, status, rejection_reason, phone, instagram, accepted_categories, address]
+      required: [id, cnpj, website, status, rejection_reason, banner_url, phone, instagram, accepted_categories, address]
       properties:
         id: { type: string, format: uuid }
         cnpj: { type: string, examples: ['12.345.678/0001-99'] }
         website: { type: [string, 'null'], format: uri }
         status: { $ref: '#/components/schemas/NgoStatus' }
         rejection_reason: { type: [string, 'null'] }
+        banner_url: { type: [string, 'null'], format: uri, description: 'Banner 1500×500 (WEBP); null = sem banner' }
         phone: { type: [string, 'null'], pattern: '^[1-9][0-9]{9,10}$', description: 'Só dígitos, com DDD', examples: ['11987654321'] }
         instagram: { type: [string, 'null'], description: 'Usuário, sem @', examples: ['ongsalvadora'] }
         accepted_categories: { type: array, items: { $ref: '#/components/schemas/Category' } }
@@ -1072,7 +1175,7 @@ components:
 
     User:
       type: object
-      required: [id, name, email, role, city, state, bio, preferences]
+      required: [id, name, email, role, city, state, bio, avatar_url, preferences]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -1081,6 +1184,7 @@ components:
         city: { type: string }
         state: { $ref: '#/components/schemas/UF' }
         bio: { type: [string, 'null'], description: 'Descrição da página pessoal' }
+        avatar_url: { type: [string, 'null'], format: uri, description: 'Foto de perfil 512×512 (WEBP); null = mostrar as iniciais' }
         preferences: { $ref: '#/components/schemas/Preferences' }
         ngo_profile: { $ref: '#/components/schemas/NgoProfile' }
 

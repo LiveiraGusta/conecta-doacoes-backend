@@ -84,6 +84,7 @@ export const NgoProfileDto = z
     website: z.string().nullable(),
     status: NgoStatus,
     rejection_reason: z.string().nullable(),
+    banner_url: z.string().nullable(),
     phone: z.string().nullable(),
     instagram: z.string().nullable(),
     accepted_categories: z.array(Category),
@@ -119,6 +120,7 @@ export const UserDto = z
     city: z.string(),
     state: UF,
     bio: z.string().nullable(),
+    avatar_url: z.string().nullable(),
     preferences: PreferencesDto,
     ngo_profile: NgoProfileDto.optional(),
   })
@@ -140,6 +142,7 @@ export const toUserDto = (u: UserWithProfile): UserDto => ({
   city: u.city,
   state: u.state as UserDto['state'],
   bio: u.bio ?? null,
+  avatar_url: u.avatar_url ?? null,
   preferences: toPreferencesDto(u.preferences),
   ...(u.role === 'NGO' && u.ngo_profile
     ? {
@@ -149,6 +152,7 @@ export const toUserDto = (u: UserWithProfile): UserDto => ({
           website: u.ngo_profile.website,
           status: u.ngo_profile.status,
           rejection_reason: u.ngo_profile.rejection_reason,
+          banner_url: u.ngo_profile.banner_url ?? null,
           phone: u.ngo_profile.phone ?? null,
           instagram: u.ngo_profile.instagram ?? null,
           accepted_categories: u.ngo_profile.accepted_categories ?? [],
