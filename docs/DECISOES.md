@@ -132,3 +132,13 @@ Mudanças pedidas no planejamento do frontend React. O plano e o registro comple
 | 0.2b-2 | Guardar a URL pública (`avatar_url`, `banner_url`), como em `item_photos`, e não o caminho | Claude | Reaproveita `publicUrl`/`pathFromPublicUrl`. O plano falava em `avatar_path` |
 | 0.2b-2 | Trocar sobe a nova, grava a URL e só então apaga a antiga; se gravar falhar, a nova é apagada | Claude | Nunca fica um usuário apontando para arquivo inexistente. Coberto por teste unitário |
 | 0.2b-2 | Excluir a conta também apaga a foto de perfil e o banner, e limpa `bio` e `avatar_url` | Claude | A anonimização não deixa imagem nem descrição da pessoa |
+| 0.2b-3 | Página pessoal `GET /users/:id` e doações `GET /users/:id/donations`, num módulo novo `users` | Usuário | Doador com nome abreviado; ONG com nome completo, banner e categorias |
+| 0.2b-3 | Telefone, Instagram e endereço da ONG só para ONG `ATIVO`, salvo para a própria ONG | Usuário | ONG ainda não verificada não recebe contato direto pela página |
+| 0.2b-3 | Doações do doador ocultas → `200 { total: 0, data: [], hidden: true }` e `donations_count: null` | Usuário | Não revela se existem doações. O próprio doador sempre vê as suas |
+| 0.2b-3 | Admin, conta excluída e id inexistente → `404 USER_NOT_FOUND` (código novo) | Usuário | Admin não tem página pessoal |
+| 0.2b-3 | Rotas de visitante `GET /public/items`, `/public/items/:id` e `/public/users/:id`, com DTO próprio e `additionalProperties: false` | Usuário | Sem nome, foto, banner, endereço, contato, observações ou contagem de interessadas. Testes conferem as chaves e procuram vazamentos no corpo |
+| 0.2b-3 | Visitante: feed de todas as cidades; item `DOADO` e ONG que não está `ATIVO` dão 404 | Usuário | O público só vê o que já está no feed |
+| 0.2b-3 | Rate limit das rotas públicas: 60 por minuto, por IP (`PUBLIC_RATE_LIMIT_MAX`) | Claude | Separado do limite geral, para conter raspagem sem afetar quem está logado |
+| 0.2b-3 | `avatar_url` também no doador do feed/detalhe, nas ONGs interessadas e na contraparte do chat | Usuário | Aditivo. Nas denúncias do Admin, `Counterpart` continua sem foto (o campo é opcional no openapi) |
+| 0.2b-3 | O feed do visitante reaproveita `findFeed` sem cidade/UF e um id de visitante que nunca existe | Claude | Uma consulta só para os dois modos; `has_user_interest` sempre `false` para o visitante |
+| 0.2b-3 | Fim da fase 0: o backend tem tudo o que o plano do frontend pede | Claude | Próximo passo: fase 1a do frontend |

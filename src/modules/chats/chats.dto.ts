@@ -25,7 +25,9 @@ export type CancelBody = z.infer<typeof CancelBody>;
 // ── Saída ──
 const PartyRole = z.enum(['DONOR', 'NGO']);
 
-export const CounterpartDto = z.object({ id: z.uuid(), name: z.string(), role: PartyRole }).describe('Counterpart');
+export const CounterpartDto = z
+  .object({ id: z.uuid(), name: z.string(), role: PartyRole, avatar_url: z.string().nullable() })
+  .describe('Counterpart');
 export type CounterpartDto = z.infer<typeof CounterpartDto>;
 
 export const MessageDto = z
@@ -112,7 +114,12 @@ export const toChatListDto = (page: { total: number; rows: ChatSummary[] }): Cha
     item_title: r.item_title,
     item_photo: r.item_photo,
     item_status: r.item_status,
-    counterpart: { id: r.counterpart_id, name: r.counterpart_name, role: party(r.counterpart_role) },
+    counterpart: {
+      id: r.counterpart_id,
+      name: r.counterpart_name,
+      role: party(r.counterpart_role),
+      avatar_url: r.counterpart_avatar_url ?? null,
+    },
     last_message:
       r.last_message !== null && r.last_sender_id && r.last_created_at
         ? { message: r.last_message, sender_id: r.last_sender_id, created_at: toIso(r.last_created_at) }
@@ -129,7 +136,12 @@ export const toChatRoomDto = (r: { item: Item; counterpart: Counterpart; message
     donor_id: r.item.donor_id,
     selected_ngo_id: r.item.selected_ngo_id,
   },
-  counterpart: { id: r.counterpart.id, name: r.counterpart.name, role: party(r.counterpart.role) },
+  counterpart: {
+    id: r.counterpart.id,
+    name: r.counterpart.name,
+    role: party(r.counterpart.role),
+    avatar_url: r.counterpart.avatar_url ?? null,
+  },
   messages: r.messages.map(toMessageDto),
 });
 

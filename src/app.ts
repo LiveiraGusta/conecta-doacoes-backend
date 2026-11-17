@@ -56,6 +56,10 @@ import { itemsRepository } from './modules/items/items.repository';
 import { itemsRoutes } from './modules/items/items.routes';
 import { createItemsService } from './modules/items/items.service';
 import { healthRoutes } from './modules/health/health.routes';
+import { createUsersController } from './modules/users/users.controller';
+import { usersRepository } from './modules/users/users.repository';
+import { usersRoutes } from './modules/users/users.routes';
+import { createUsersService } from './modules/users/users.service';
 
 export interface BuildAppOptions {
   /** Injetado nos testes; por padrão cria o pool a partir de DATABASE_URL. */
@@ -226,6 +230,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       hasher: bcryptHasher,
     }),
   };
+  const users = createUsersService({ db, usersRepo: usersRepository, items: services.items });
   const maxFileBytes = env.UPLOAD_MAX_FILE_MB * 1024 * 1024;
   const controllers = {
     auth: createAuthController(services.auth, { maxFileBytes, passwordReset: services.passwordReset }),
@@ -235,6 +240,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     chats: createChatsController(services.chats),
     reports: createReportsController(services.reports),
     profile: createProfileController(services.profile, { maxFileBytes }),
+    users: createUsersController(users),
   };
 
   await app.register(
@@ -246,6 +252,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       chatsRoutes(api, controllers.chats);
       reportsRoutes(api, controllers.reports);
       profileRoutes(api, controllers.profile);
+      usersRoutes(api, controllers.users);
       chatsWebsocket(api, {
         service: services.chats,
         bus,

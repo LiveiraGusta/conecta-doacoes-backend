@@ -3,7 +3,7 @@
 > **Para quem é:** uma IA (ou um dev) que vai construir o frontend consumindo esta API.
 > O guia é organizado por **fluxos de ponta a ponta**, na ordem em que o usuário passa por eles.
 > Para o detalhe de cada rota, os schemas são a fonte da verdade:
-> - REST: [`specs/openapi.yaml`](specs/openapi.yaml) (40 rotas, OpenAPI 3.1)
+> - REST: [`specs/openapi.yaml`](specs/openapi.yaml) (45 rotas, OpenAPI 3.1)
 > - Tempo real: [`specs/Spec do Chat em Tempo Real — WebSocket.md`](specs/Spec%20do%20Chat%20em%20Tempo%20Real%20—%20WebSocket.md)
 >
 > Versão da API coberta: **MVP (V1.0) + V1.1** (perfil, recuperação de senha, denúncias, mensagens não lidas) **+ sessão por cookie httpOnly** ([ADR-13](adr/ADR-13-sessao-cookie.md)).
@@ -41,7 +41,7 @@
 - A sessão vale **7 dias** e **não há refresh**. Quando expirar, a API responde `401` e o usuário faz login de novo.
 - **Sair:** `POST /auth/logout` → `204`. A rota apaga o cookie e funciona mesmo sem sessão. Depois, feche o WebSocket e limpe o cache.
 - **Saber se há sessão:** `GET /auth/me`. Um `401` no boot significa visitante (ou sessão expirada), não um erro a mostrar.
-- **Toda rota exige sessão**, exceto: `POST /auth/register/donor`, `POST /auth/register/ngo`, `POST /auth/login`, `POST /auth/logout`, `POST /auth/password/forgot`, `POST /auth/password/reset`, `/health*` e o WebSocket (que confere o cookie no handshake).
+- **Toda rota exige sessão**, exceto: `POST /auth/register/donor`, `POST /auth/register/ngo`, `POST /auth/login`, `POST /auth/logout`, `POST /auth/password/forgot`, `POST /auth/password/reset`, as rotas de visitante `GET /public/*` (F13), `/health*` e o WebSocket (que confere o cookie no handshake).
 - **Uma sessão válida pode passar a dar `401`**:
   - depois de redefinir a senha pelo e-mail (todas as sessões caem);
   - depois de trocar a senha (caem as **outras** sessões; a atual recebe um cookie novo);
@@ -177,6 +177,7 @@ Campos do contexto do usuário no feed e no detalhe:
 - `is_selected`: esta ONG é a escolhida. Sempre `false` para doador.
 - `interests_count`: quantas ONGs curtiram.
 - `donor.name` vem **abreviado** ("Marina S."). O nome completo só aparece no chat.
+- `donor.avatar_url` (e `avatar_url` nas interessadas e na `counterpart` do chat) é a foto de perfil; `null` = mostre as iniciais.
 
 ---
 
@@ -384,6 +385,27 @@ Peça confirmação nos dois botões ("Tem certeza?"): as duas ações são defi
   - `409 HAS_ACTIVE_NEGOTIATIONS`: o usuário precisa concluir ou cancelar as negociações em andamento antes.
   - Explique as consequências na confirmação: a conta é anonimizada (descrição, foto de perfil e banner são apagados). Para o doador, os itens disponíveis são apagados; para a ONG, os interesses em itens abertos somem. O histórico de doações concluídas fica, com o nome "Usuário removido".
 
+### F13. Página pessoal e visitante
+
+**Página pessoal (logado):** `GET /users/{userId}` → `UserProfile`.
+- Doador: `name` abreviado, `ngo: null`. `donations_count` é `null` quando ele escolheu não mostrar as doações (`show_donations` nas preferências). Ele mesmo sempre vê a contagem.
+- ONG: nome completo e o bloco `ngo` (status, site, banner, categorias aceitas). `phone`, `instagram` e `address` só vêm quando a ONG está `ATIVO`, ou quando quem vê é a própria ONG. Nos outros casos vêm `null`.
+- `404 USER_NOT_FOUND`: Admin, conta excluída ou id inexistente.
+- Links para a página: doador no card e no detalhe, ONGs interessadas, cabeçalho do chat e o próprio avatar ("Minha página").
+
+**Doações da página:** `GET /users/{userId}/donations?limit&offset` → `{ total, data: FeedItem[], hidden }`. Itens `DOADO` do doador, ou recebidos pela ONG, dos mais recentes para os mais antigos. Com as doações ocultas, a resposta é `{ total: 0, data: [], hidden: true }`: mostre "Este doador prefere não exibir suas doações".
+
+**Visitante (sem login):** as rotas `GET /public/*` não exigem sessão e têm rate limit por IP (60 por minuto). Nunca trazem nome, foto, banner, endereço, contato, observações nem contagem de interessadas.
+
+| Rota | O que traz |
+| --- | --- |
+| `GET /public/items?category&search&limit&offset` | Feed de **todas as cidades** (`DISPONIVEL` e `EM_PROGRESSO`): `{ total, data: PublicItem[] }` |
+| `GET /public/items/{itemId}` | `PublicItem`. Item `DOADO` ou inexistente → `404 ITEM_NOT_FOUND` |
+| `GET /public/users/{userId}` | `PublicUser`: papel, cidade/UF, descrição, categorias aceitas e contagem. ONG que não está `ATIVO`, Admin ou excluído → `404 USER_NOT_FOUND` |
+
+- Escolha o serviço pelo estado da sessão: com usuário logado, `/items/feed` e `/users/{id}`; sem, as rotas `/public/*`. Use chaves de cache diferentes para os dois modos.
+- Mostre o doador como "Doador", com avatar genérico. Qualquer ação (interesse, conversas, publicar) abre "Entre para continuar".
+
 ---
 
 ## 5. WebSocket (tempo real)
@@ -482,6 +504,7 @@ Ao reconectar, busque o que se perdeu em cada sala aberta com `GET /chats/{itemI
 | `NGO_NOT_FOUND` | 404 | Moderação | Recarregar a fila |
 | `INTEREST_NOT_FOUND` | 404 | Desfazer interesse | Tratar como sucesso |
 | `REPORT_NOT_FOUND` | 404 | Denúncias (admin) | Recarregar a fila |
+| `USER_NOT_FOUND` | 404 | Página pessoal (`/users/{id}`, `/public/users/{id}`) | Tela de não encontrado |
 | `EMAIL_TAKEN` | 409 | Cadastro | Erro no campo e-mail + link "Entrar" |
 | `CNPJ_TAKEN` | 409 | Cadastro de ONG | Erro no campo CNPJ |
 | `ALREADY_INTERESTED` | 409 | Interesse | Tratar como sucesso |

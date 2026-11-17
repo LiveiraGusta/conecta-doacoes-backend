@@ -30,6 +30,7 @@ export const chatsRepository = {
       SELECT i.id AS item_id, i.title AS item_title, i.status AS item_status,
              (SELECT p.photo_url FROM item_photos p WHERE p.item_id = i.id ORDER BY p.created_at, p.id LIMIT 1) AS item_photo,
              cp.id AS counterpart_id, cp.name AS counterpart_name, cp.role AS counterpart_role,
+             cp.avatar_url AS counterpart_avatar_url,
              lm.message AS last_message, lm.sender_id AS last_sender_id, lm.created_at AS last_created_at,
              ${unreadOf(q, f.userId)} AS unread_count
       FROM items i
@@ -84,7 +85,7 @@ export const chatsRepository = {
   },
 
   async findCounterpart(q: Queryable, userId: string): Promise<Counterpart | null> {
-    const [row] = await q<Counterpart[]>`SELECT id, name, role FROM users WHERE id = ${userId}`;
+    const [row] = await q<Counterpart[]>`SELECT id, name, role, avatar_url FROM users WHERE id = ${userId}`;
     return row ?? null;
   },
 

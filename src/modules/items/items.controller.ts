@@ -5,6 +5,9 @@ import {
   PublishItemFields,
   toItemDetailDto,
   toItemDto,
+  toPublicItemDto,
+  toPublicItemListDto,
+  type PublicFeedQuery,
   toItemListDto,
   type FeedQuery,
   type MyItemsQuery,
@@ -38,6 +41,14 @@ export const createItemsController = (service: ItemsService, opts: { maxFileByte
   detail: async (req: FastifyRequest<{ Params: ItemIdParams }>, reply: FastifyReply) => {
     const item = await service.detail(req.user, req.params.itemId);
     return reply.status(200).send(toItemDetailDto(item));
+  },
+
+  publicFeed: async (req: FastifyRequest<{ Querystring: PublicFeedQuery }>, reply: FastifyReply) => {
+    return reply.status(200).send(toPublicItemListDto(await service.publicFeed(req.query)));
+  },
+
+  publicDetail: async (req: FastifyRequest<{ Params: ItemIdParams }>, reply: FastifyReply) => {
+    return reply.status(200).send(toPublicItemDto(await service.publicDetail(req.params.itemId)));
   },
 });
 

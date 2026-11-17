@@ -33,6 +33,7 @@ const Env = z.object({
   AUTH_RATE_LIMIT_MAX: z.coerce.number().int().default(10),
   ITEMS_RATE_LIMIT_MAX: z.coerce.number().int().default(10), // POST /items, por usuário
   MESSAGES_RATE_LIMIT_MAX: z.coerce.number().int().default(30), // POST /chats/:id/messages, por usuário
+  PUBLIC_RATE_LIMIT_MAX: z.coerce.number().int().default(60), // rotas /public/*, por IP (visitante)
   BODY_LIMIT_MB: z.coerce.number().default(1),
   UPLOAD_MAX_FILE_MB: z.coerce.number().default(5),
   SWAGGER_ENABLED: bool.default(false),

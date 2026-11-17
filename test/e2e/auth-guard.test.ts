@@ -52,6 +52,9 @@ describe('toda rota nasce fechada', () => {
         'POST /api/v1/auth/password/reset',
         'POST /api/v1/auth/register/donor',
         'POST /api/v1/auth/register/ngo',
+        'GET /api/v1/public/items',
+        'GET /api/v1/public/items/:itemId',
+        'GET /api/v1/public/users/:userId',
       ].sort(),
     );
   });

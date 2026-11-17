@@ -130,6 +130,7 @@ export interface ItemEvent {
 /** Item com o contexto que o feed e o detalhe precisam (visão de leitura). */
 export interface ItemView extends Item {
   donor_name: string;
+  donor_avatar_url: string | null;
   /** URLs públicas, na ordem de envio (a primeira é a capa). */
   photos: string[];
   photo_ids: string[];
@@ -148,6 +149,7 @@ export interface InterestedNgo {
   interest_id: string;
   ngo_id: string;
   name: string;
+  avatar_url: string | null;
   city: string;
   state: string;
   cnpj: string;
@@ -161,6 +163,41 @@ export interface Counterpart {
   id: string;
   name: string;
   role: Role;
+  avatar_url?: string | null;
+}
+
+/** Linha da página pessoal (GET /users/:id): usuário, perfil de ONG, privacidade e contagem. */
+export interface UserProfileRow {
+  id: string;
+  name: string;
+  role: Role;
+  city: string;
+  state: string;
+  bio: string | null;
+  avatar_url: string | null;
+  created_at: Date;
+  ngo_status: NgoStatus | null;
+  website: string | null;
+  banner_url: string | null;
+  phone: string | null;
+  instagram: string | null;
+  accepted_categories: Category[];
+  cep: string | null;
+  street: string | null;
+  number: string | null;
+  complement: string | null;
+  neighborhood: string | null;
+  show_donations: boolean;
+  donations_count: number;
+}
+
+/** O que a página pessoal mostra para quem está logado. */
+export interface UserProfileView {
+  row: UserProfileRow;
+  /** Doador com as doações ocultas (e quem vê não é ele): a contagem não aparece. */
+  donationsHidden: boolean;
+  /** Endereço e contatos só de ONG ATIVO, salvo para a própria ONG. */
+  showNgoContact: boolean;
 }
 
 /** Uma linha da lista de conversas. */
@@ -172,6 +209,7 @@ export interface ChatSummary {
   counterpart_id: string;
   counterpart_name: string;
   counterpart_role: Role;
+  counterpart_avatar_url: string | null;
   last_message: string | null;
   last_sender_id: string | null;
   last_created_at: Date | null;

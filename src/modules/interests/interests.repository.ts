@@ -39,7 +39,7 @@ export const interestsRepository = {
   /** ONGs que curtiram o item: ATIVO primeiro, depois por data da curtida. */
   async listByItem(q: Queryable, itemId: string): Promise<InterestedNgo[]> {
     return q<InterestedNgo[]>`
-      SELECT ii.id AS interest_id, u.id AS ngo_id, u.name, u.city, u.state,
+      SELECT ii.id AS interest_id, u.id AS ngo_id, u.name, u.avatar_url, u.city, u.state,
              np.cnpj, np.website, np.status AS ngo_status, ii.created_at AS liked_at
       FROM item_interests ii
       JOIN users u ON u.id = ii.ngo_id

@@ -43,6 +43,12 @@ tags:
     description: Módulo 4 — Denúncias
   - name: Profile
     description: Perfil do usuário logado
+  - name: Users
+    description: Página pessoal de doadores e ONGs (logado)
+  - name: Public
+    description: |
+      Visitante sem login. DTOs próprios, com `additionalProperties: false`: nunca trazem nome, foto,
+      banner, endereço, contato, observações do item nem contagem de interessadas. Rate limit por IP.
   - name: Health
     description: Liveness e readiness (fora de /api/v1)
 
@@ -1009,6 +1015,97 @@ paths:
           description: NGO_ALREADY_ACTIVE
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
 
+  # ───────────────────────── Página pessoal e visitante ─────────────────────────
+  /users/{userId}:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    get:
+      tags: [Users]
+      summary: Página pessoal de um doador ou ONG
+      description: |
+        Doador: nome abreviado ("Marina S."); `donations_count` é null se ele escolheu não mostrar as doações
+        (exceto para ele mesmo). ONG: nome completo e o bloco `ngo`; telefone, Instagram e endereço só
+        vêm quando a ONG está ATIVO (ou para ela mesma). Admin e conta excluída: 404 USER_NOT_FOUND.
+      responses:
+        '200':
+          description: Página pessoal
+          content: { application/json: { schema: { $ref: '#/components/schemas/UserProfile' } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/UserNotFound' }
+
+  /users/{userId}/donations:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    get:
+      tags: [Users]
+      summary: Doações concluídas do doador ou recebidas pela ONG
+      description: |
+        Doador com as doações ocultas (e quem pede não é ele): `{ total: 0, data: [], hidden: true }`,
+        sem revelar se existem doações. Itens DOADO, dos mais recentes para os mais antigos.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Lista paginada
+          content: { application/json: { schema: { $ref: '#/components/schemas/UserDonations' } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/UserNotFound' }
+
+  /public/items:
+    get:
+      tags: [Public]
+      summary: Feed para visitante (todas as cidades)
+      description: Itens DISPONIVEL e EM_PROGRESSO de todas as cidades, mais novos primeiro.
+      security: []
+      parameters:
+        - { name: category, in: query, schema: { $ref: '#/components/schemas/Category' } }
+        - { name: search, in: query, schema: { type: string, minLength: 1, maxLength: 100 } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Lista paginada
+          content: { application/json: { schema: { $ref: '#/components/schemas/PublicItemList' } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /public/items/{itemId}:
+    parameters:
+      - $ref: '#/components/parameters/ItemId'
+    get:
+      tags: [Public]
+      summary: Detalhe para visitante
+      description: Só itens que estão no feed (DISPONIVEL ou EM_PROGRESSO). DOADO ou inexistente → 404.
+      security: []
+      responses:
+        '200':
+          description: Item
+          content: { application/json: { schema: { $ref: '#/components/schemas/PublicItem' } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/ItemNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /public/users/{userId}:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    get:
+      tags: [Public]
+      summary: Página pessoal para visitante
+      description: |
+        Sem nome, foto, banner, endereço nem contatos. Só doadores e ONGs ATIVO; ONG pendente ou rejeitada,
+        Admin e conta excluída → 404 USER_NOT_FOUND.
+      security: []
+      responses:
+        '200':
+          description: Perfil público
+          content: { application/json: { schema: { $ref: '#/components/schemas/PublicUser' } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/UserNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   # ───────────────────────── Health (fora de /api/v1) ─────────────────────────
   /health:
     servers:
@@ -1063,6 +1160,7 @@ components:
     Limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 30 } }
     Offset: { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
     ItemId: { name: itemId, in: path, required: true, schema: { type: string, format: uuid } }
+    UserId: { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
 
   responses:
     Unauthorized:
@@ -1088,6 +1186,9 @@ components:
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
     NotInProgress:
       description: ITEM_NOT_IN_PROGRESS
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    UserNotFound:
+      description: USER_NOT_FOUND (Admin, conta excluída, inexistente ou, no público, ONG não ATIVO)
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
     ReportNotFound:
       description: REPORT_NOT_FOUND
@@ -1242,6 +1343,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         name: { type: string, examples: ['Marina S.'] }
+        avatar_url: { type: [string, 'null'], format: uri, description: 'Foto de perfil; null = iniciais' }
 
     FeedItem:
       type: object
@@ -1294,6 +1396,7 @@ components:
         interest_id: { type: string, format: uuid }
         ngo_id: { type: string, format: uuid }
         name: { type: string }
+        avatar_url: { type: [string, 'null'], format: uri }
         city: { type: string }
         state: { type: string }
         cnpj: { type: string, examples: ['12.345.678/0001-99'] }
@@ -1326,6 +1429,7 @@ components:
         id: { type: string, format: uuid }
         name: { type: string }
         role: { type: string, enum: [DONOR, NGO] }
+        avatar_url: { type: [string, 'null'], format: uri, description: 'Vem na lista de conversas e na sala (não nas denúncias)' }
 
     ChatSummary:
       type: object
@@ -1452,3 +1556,82 @@ components:
               reason: { type: [string, 'null'] }
               created_at: { type: string, format: date-time }
         messages: { type: array, items: { $ref: '#/components/schemas/Message' } }
+
+    # ── Página pessoal e visitante ──
+    UserProfile:
+      type: object
+      required: [id, role, name, avatar_url, bio, city, state, member_since, donations_count, ngo]
+      properties:
+        id: { type: string, format: uuid }
+        role: { type: string, enum: [DONOR, NGO] }
+        name: { type: string, description: 'Doador abreviado ("Marina S."); ONG com o nome completo' }
+        avatar_url: { type: [string, 'null'], format: uri }
+        bio: { type: [string, 'null'] }
+        city: { type: string }
+        state: { $ref: '#/components/schemas/UF' }
+        member_since: { type: string, format: date-time }
+        donations_count:
+          type: [integer, 'null']
+          minimum: 0
+          description: Doações concluídas (doadas ou recebidas). null = doador escolheu não mostrar
+        ngo:
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [status, website, banner_url, accepted_categories, phone, instagram, address]
+              properties:
+                status: { $ref: '#/components/schemas/NgoStatus' }
+                website: { type: [string, 'null'], format: uri }
+                banner_url: { type: [string, 'null'], format: uri }
+                accepted_categories: { type: array, items: { $ref: '#/components/schemas/Category' } }
+                phone: { type: [string, 'null'], description: 'Só de ONG ATIVO (ou para ela mesma)' }
+                instagram: { type: [string, 'null'], description: 'Só de ONG ATIVO (ou para ela mesma)' }
+                address:
+                  description: 'Só de ONG ATIVO (ou para ela mesma)'
+                  oneOf:
+                    - type: 'null'
+                    - $ref: '#/components/schemas/Address'
+
+    UserDonations:
+      type: object
+      required: [total, data, hidden]
+      properties:
+        total: { type: integer, minimum: 0 }
+        data: { type: array, items: { $ref: '#/components/schemas/FeedItem' } }
+        hidden: { type: boolean, description: 'true = o doador escolheu não mostrar (lista sempre vazia)' }
+
+    PublicItem:
+      type: object
+      additionalProperties: false
+      required: [id, title, description, category, city, state, status, created_at, photos]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: [string, 'null'] }
+        category: { $ref: '#/components/schemas/Category' }
+        city: { type: string }
+        state: { type: string }
+        status: { type: string, enum: [DISPONIVEL, EM_PROGRESSO] }
+        created_at: { type: string, format: date-time }
+        photos: { type: array, minItems: 3, maxItems: 3, items: { type: string, format: uri } }
+
+    PublicItemList:
+      type: object
+      additionalProperties: false
+      required: [total, data]
+      properties:
+        total: { type: integer, minimum: 0 }
+        data: { type: array, items: { $ref: '#/components/schemas/PublicItem' } }
+
+    PublicUser:
+      type: object
+      additionalProperties: false
+      required: [id, role, city, state, bio, accepted_categories, donations_count]
+      properties:
+        id: { type: string, format: uuid }
+        role: { type: string, enum: [DONOR, NGO] }
+        city: { type: string }
+        state: { $ref: '#/components/schemas/UF' }
+        bio: { type: [string, 'null'] }
+        accepted_categories: { type: array, items: { $ref: '#/components/schemas/Category' }, description: 'Sempre [] para doador' }
+        donations_count: { type: [integer, 'null'], minimum: 0 }

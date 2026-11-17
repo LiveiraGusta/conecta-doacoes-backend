@@ -18,6 +18,7 @@ export const ERRORS = {
   NGO_NOT_FOUND: { status: 404, message: 'ONG não encontrada.' },
   INTEREST_NOT_FOUND: { status: 404, message: 'Você não demonstrou interesse neste item.' },
   REPORT_NOT_FOUND: { status: 404, message: 'Denúncia não encontrada.' },
+  USER_NOT_FOUND: { status: 404, message: 'Usuário não encontrado.' },
   CONFLICT: { status: 409, message: 'Conflito com o estado atual do recurso.' },
   EMAIL_TAKEN: { status: 409, message: 'Já existe uma conta com este e-mail.' },
   CNPJ_TAKEN: { status: 409, message: 'Já existe uma ONG com este CNPJ.' },

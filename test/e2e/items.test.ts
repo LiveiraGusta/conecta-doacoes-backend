@@ -153,7 +153,7 @@ describe('Módulo 2 — Vitrine & Doações', () => {
       const body = res.json();
       expect(body.total).toBe(3);
       expect(body.data.map((i: { id: string }) => i.id)).toEqual([recent.id, emNegociacao.id, old.id]);
-      expect(body.data[0].donor).toEqual({ id: donor.id, name: 'Marina S.' });
+      expect(body.data[0].donor).toEqual({ id: donor.id, name: 'Marina S.', avatar_url: null });
       expect(body.data[0].photos).toHaveLength(3);
       await expectContract(res, 'GET', '/items/feed');
 
