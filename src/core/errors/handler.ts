@@ -8,6 +8,7 @@ const UNIQUE_CONSTRAINTS: Record<string, ErrorCode> = {
   users_email_key: 'EMAIL_TAKEN',
   ngo_profiles_cnpj_key: 'CNPJ_TAKEN',
   item_interests_item_id_ngo_id_key: 'ALREADY_INTERESTED',
+  reports_open_per_reporter_key: 'ALREADY_REPORTED',
 };
 
 const TOO_LARGE_CODES = new Set([

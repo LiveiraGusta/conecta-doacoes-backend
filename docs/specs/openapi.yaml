@@ -574,6 +574,9 @@ paths:
     post:
       tags: [Reports]
       summary: Denunciar a outra parte da negociação
+      description: |
+        Só quem participa da negociação atual (doador ou ONG escolhida), com o item EM_PROGRESSO ou DOADO;
+        a denunciada é sempre a outra parte. Uma denúncia aberta por usuário e item. Limite: 5 por minuto, por usuário.
       requestBody:
         required: true
         content:
@@ -594,8 +597,9 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/ItemNotFound' }
         '409':
-          description: ALREADY_REPORTED
+          description: ALREADY_REPORTED, ou CHAT_CLOSED (item DISPONIVEL, sem negociação a denunciar)
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /admin/reports:
     get:
@@ -632,12 +636,14 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ReportDetail' }
+        '400': { $ref: '#/components/responses/ValidationError' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/ReportNotFound' }
     patch:
       tags: [Reports]
       summary: Resolver denúncia (ADMIN)
+      description: Idempotente — resolver uma denúncia já resolvida devolve 200 com ela como está.
       requestBody:
         required: true
         content:

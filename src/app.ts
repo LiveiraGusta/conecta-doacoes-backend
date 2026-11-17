@@ -43,6 +43,10 @@ import { createProfileController } from './modules/profile/profile.controller';
 import { profileRepository } from './modules/profile/profile.repository';
 import { profileRoutes } from './modules/profile/profile.routes';
 import { createProfileService } from './modules/profile/profile.service';
+import { createReportsController } from './modules/reports/reports.controller';
+import { reportsRepository } from './modules/reports/reports.repository';
+import { reportsRoutes } from './modules/reports/reports.routes';
+import { createReportsService } from './modules/reports/reports.service';
 import { createHealthController } from './modules/health/health.controller';
 import { itemEventsRepository } from './modules/items/item-events.repository';
 import { createItemsController } from './modules/items/items.controller';
@@ -181,6 +185,12 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       eventsRepo: itemEventsRepository,
       bus,
     }),
+    reports: createReportsService({
+      db,
+      itemsRepo: itemsRepository,
+      reportsRepo: reportsRepository,
+      eventsRepo: itemEventsRepository,
+    }),
     profile: createProfileService({
       db,
       profileRepo: profileRepository,
@@ -196,6 +206,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     items: createItemsController(services.items, { maxFileBytes }),
     interests: createInterestsController(services.interests),
     chats: createChatsController(services.chats),
+    reports: createReportsController(services.reports),
     profile: createProfileController(services.profile, { maxFileBytes }),
   };
 
@@ -206,6 +217,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       itemsRoutes(api, controllers.items);
       interestsRoutes(api, controllers.interests);
       chatsRoutes(api, controllers.chats);
+      reportsRoutes(api, controllers.reports);
       profileRoutes(api, controllers.profile);
       chatsWebsocket(api, {
         service: services.chats,

@@ -1,4 +1,4 @@
-// Lista única de códigos de erro: a mesma do openapi.yaml (módulos 1–4).
+// Lista única de códigos de erro: a mesma do openapi.yaml.
 export const ERRORS = {
   VALIDATION_ERROR: { status: 400, message: 'Dados inválidos.' },
   INVALID_PHOTO_COUNT: { status: 400, message: 'É obrigatório enviar exatamente 3 fotos do item.' },
@@ -16,6 +16,7 @@ export const ERRORS = {
   ITEM_NOT_FOUND: { status: 404, message: 'Item não encontrado.' },
   NGO_NOT_FOUND: { status: 404, message: 'ONG não encontrada.' },
   INTEREST_NOT_FOUND: { status: 404, message: 'Você não demonstrou interesse neste item.' },
+  REPORT_NOT_FOUND: { status: 404, message: 'Denúncia não encontrada.' },
   CONFLICT: { status: 409, message: 'Conflito com o estado atual do recurso.' },
   EMAIL_TAKEN: { status: 409, message: 'Já existe uma conta com este e-mail.' },
   CNPJ_TAKEN: { status: 409, message: 'Já existe uma ONG com este CNPJ.' },
@@ -33,6 +34,7 @@ export const ERRORS = {
     status: 409,
     message: 'Você tem negociações em andamento. Conclua ou cancele antes de excluir a conta.',
   },
+  ALREADY_REPORTED: { status: 409, message: 'Você já tem uma denúncia aberta sobre esta negociação.' },
   CHAT_CLOSED: { status: 409, message: 'Esta conversa não está aberta.' },
   PAYLOAD_TOO_LARGE: { status: 413, message: 'Envio muito grande.' },
   TOO_MANY_REQUESTS: { status: 429, message: 'Muitas requisições. Tente de novo em instantes.' },

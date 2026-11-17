@@ -148,3 +148,40 @@ export interface ChatSummary {
   last_sender_id: string | null;
   last_created_at: Date | null;
 }
+
+export type ReportStatus = 'ABERTA' | 'RESOLVIDA';
+
+export interface Report {
+  id: string;
+  item_id: string;
+  reporter_id: string;
+  reported_id: string;
+  reason: string;
+  status: ReportStatus;
+  created_at: Date;
+  resolved_at: Date | null;
+  resolved_by: string | null;
+}
+
+/** Uma linha da fila de denúncias do Admin. */
+export interface ReportSummary {
+  id: string;
+  status: ReportStatus;
+  reason: string;
+  created_at: Date;
+  item_id: string;
+  item_title: string;
+  item_status: ItemStatus;
+  reporter_id: string;
+  reporter_name: string;
+  reporter_role: Role;
+  reported_id: string;
+  reported_name: string;
+  reported_role: Role;
+}
+
+/** Parte de uma denúncia, como o Admin vê (com e-mail). */
+export interface ReportParty extends Counterpart {
+  email: string;
+  ngo_profile_id: string | null;
+}
