@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance, type RouteOptions } from 'fastify';
+import Fastify, { type FastifyInstance, LogController, type RouteOptions } from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
@@ -84,7 +84,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   const app = Fastify({
     logger: opts.logger === false ? false : loggerOptions(),
     // O log de acesso (uma linha por requisição) vem do accessLogPlugin.
-    disableRequestLogging: true,
+    logController: new LogController({ disableRequestLogging: true }),
     trustProxy: env.TRUST_PROXY,
     bodyLimit: env.BODY_LIMIT_MB * 1024 * 1024,
     connectionTimeout: 10_000,
