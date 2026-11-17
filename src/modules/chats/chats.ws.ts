@@ -1,16 +1,16 @@
 import type { FastifyInstance } from 'fastify';
 import type { WebSocket } from 'ws';
-import type { JwtPayload } from '../../core/auth';
+import { issuedBeforePasswordChange, type JwtPayload } from '../../core/auth';
 import { AppError } from '../../core/errors';
 import type { RealtimeBus } from '../../core/realtime';
-import type { AuthUser } from '../../types';
+import type { AuthContext, AuthUser } from '../../types';
 import { toWsEvent, WsClientMessage, type WsServerMessage } from './chats.dto';
 import type { ChatsService } from './chats.service';
 
 export interface ChatsWsDeps {
   service: Pick<ChatsService, 'authorizeSubscription'>;
   bus: RealtimeBus;
-  findAuthContext(userId: string): Promise<AuthUser | null>;
+  findAuthContext(userId: string): Promise<AuthContext | null>;
   authTimeoutMs?: number;
   heartbeatMs?: number;
 }
@@ -89,9 +89,12 @@ export function chatsWebsocket(app: FastifyInstance, deps: ChatsWsDeps) {
           return socket.close(WS_CLOSE.UNAUTHORIZED, 'Token inválido');
         }
         const ctx = await deps.findAuthContext(payload.sub);
-        if (!ctx) return socket.close(WS_CLOSE.UNAUTHORIZED, 'Token inválido');
+        if (!ctx || issuedBeforePasswordChange(payload.iat, ctx.passwordChangedAt)) {
+          return socket.close(WS_CLOSE.UNAUTHORIZED, 'Token inválido');
+        }
         if (ctx.role !== 'DONOR' && ctx.role !== 'NGO') return socket.close(WS_CLOSE.FORBIDDEN, 'Perfil sem chat');
-        user = ctx;
+        const { passwordChangedAt: _ignored, ...current } = ctx;
+        user = current;
         clearTimeout(authTimer);
         send({ type: 'ready', user_id: ctx.id });
       }

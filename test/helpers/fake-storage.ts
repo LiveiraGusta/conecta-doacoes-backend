@@ -30,6 +30,10 @@ export function fakeStorage(): FakeStorage {
     publicUrl(path) {
       return `https://storage.test/items/${path}`;
     },
+    pathFromPublicUrl(url) {
+      const prefix = 'https://storage.test/items/';
+      return url.startsWith(prefix) ? url.slice(prefix.length) : null;
+    },
     async signedUrl(path, expiresInSec) {
       return `https://storage.test/ngo-docs/${path}?token=fake&expires=${expiresInSec}`;
     },

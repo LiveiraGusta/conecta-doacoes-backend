@@ -16,6 +16,9 @@ export interface User {
   city: string;
   state: string;
   created_at: Date;
+  updated_at?: Date | null;
+  password_changed_at?: Date | null;
+  deleted_at?: Date | null;
 }
 
 export interface NgoProfile {
@@ -31,6 +34,12 @@ export interface NgoProfile {
 /** Usuário com o perfil de ONG (quando role = NGO). */
 export interface UserWithProfile extends User {
   ngo_profile: NgoProfile | null;
+}
+
+/** O que o hook de autenticação lê do banco a cada requisição. */
+export interface AuthContext extends AuthUser {
+  /** Tokens emitidos antes disto são recusados. */
+  passwordChangedAt: Date | null;
 }
 
 /** O que o hook de autenticação coloca em request.user. */

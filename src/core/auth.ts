@@ -1,12 +1,21 @@
 import fp from 'fastify-plugin';
 import type { FastifyRequest } from 'fastify';
-import type { AuthUser, Role } from '../types';
+import type { AuthContext, AuthUser, Role } from '../types';
 import { AppError } from './errors';
 
 export interface JwtPayload {
   sub: string;
   role: Role;
+  /** Preenchido pelo @fastify/jwt na assinatura (segundos). */
+  iat?: number;
 }
+
+/**
+ * O token foi emitido antes da última troca de senha? A comparação é em segundos (precisão do iat):
+ * o token novo, emitido no mesmo segundo da troca, continua valendo.
+ */
+export const issuedBeforePasswordChange = (iat: number | undefined, changedAt: Date | null) =>
+  Boolean(changedAt) && (iat ?? 0) < Math.floor(changedAt!.getTime() / 1000);
 
 declare module '@fastify/jwt' {
   interface FastifyJWT {
@@ -23,7 +32,7 @@ declare module 'fastify' {
 }
 
 export interface AuthPluginOptions {
-  findAuthContext(userId: string): Promise<AuthUser | null>;
+  findAuthContext(userId: string): Promise<AuthContext | null>;
 }
 
 /**
@@ -43,8 +52,9 @@ export const authPlugin = fp<AuthPluginOptions>(async (app, opts) => {
       throw new AppError('UNAUTHORIZED');
     }
 
-    const user = await opts.findAuthContext(payload.sub);
-    if (!user) throw new AppError('UNAUTHORIZED');
+    const ctx = await opts.findAuthContext(payload.sub);
+    if (!ctx || issuedBeforePasswordChange(payload.iat, ctx.passwordChangedAt)) throw new AppError('UNAUTHORIZED');
+    const { passwordChangedAt: _ignored, ...user } = ctx;
     req.user = user;
   });
 });

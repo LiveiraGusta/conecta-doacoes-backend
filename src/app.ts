@@ -36,6 +36,10 @@ import { createInterestsController } from './modules/interests/interests.control
 import { interestsRepository } from './modules/interests/interests.repository';
 import { interestsRoutes } from './modules/interests/interests.routes';
 import { createInterestsService } from './modules/interests/interests.service';
+import { createProfileController } from './modules/profile/profile.controller';
+import { profileRepository } from './modules/profile/profile.repository';
+import { profileRoutes } from './modules/profile/profile.routes';
+import { createProfileService } from './modules/profile/profile.service';
 import { createHealthController } from './modules/health/health.controller';
 import { itemEventsRepository } from './modules/items/item-events.repository';
 import { createItemsController } from './modules/items/items.controller';
@@ -157,6 +161,13 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       eventsRepo: itemEventsRepository,
       bus,
     }),
+    profile: createProfileService({
+      db,
+      profileRepo: profileRepository,
+      authRepo: authRepository,
+      storage,
+      hasher: bcryptHasher,
+    }),
   };
   const maxFileBytes = env.UPLOAD_MAX_FILE_MB * 1024 * 1024;
   const controllers = {
@@ -165,6 +176,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     items: createItemsController(services.items, { maxFileBytes }),
     interests: createInterestsController(services.interests),
     chats: createChatsController(services.chats),
+    profile: createProfileController(services.profile, { maxFileBytes }),
   };
 
   await app.register(
@@ -174,6 +186,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       itemsRoutes(api, controllers.items);
       interestsRoutes(api, controllers.interests);
       chatsRoutes(api, controllers.chats);
+      profileRoutes(api, controllers.profile);
       chatsWebsocket(api, {
         service: services.chats,
         bus,
