@@ -96,6 +96,15 @@ async function seedDemoData(db: Db, storage: Storage) {
   const ngoActive = (await auth.registerNgo({ ...DEMO.ngoActive, ...place, password: DEMO_PASSWORD, website: 'https://ongsalvadora.org.br' }, [pdf])).user;
   await auth.registerNgo({ ...DEMO.ngoPending, ...place, password: DEMO_PASSWORD }, [pdf]);
   await admin.updateNgoStatus(ngoActive.ngo_profile!.id, 'ATIVO');
+  // Página pessoal da demo: a ONG com contato, endereço e categorias; a doadora com descrição e doações visíveis.
+  await db.sql`
+    UPDATE ngo_profiles SET phone = '11987654321', instagram = 'ongsalvadora',
+      accepted_categories = ARRAY['ROUPAS', 'BRINQUEDOS', 'LIVROS']::VARCHAR(20)[],
+      cep = '01310100', street = 'Av. Paulista', number = '1000', complement = 'Sala 12', neighborhood = 'Bela Vista'
+    WHERE user_id = ${ngoActive.id}`;
+  await db.sql`UPDATE users SET bio = 'Atendemos 200 famílias na região central de São Paulo.' WHERE id = ${ngoActive.id}`;
+  await db.sql`UPDATE users SET bio = 'Doo o que não uso mais para quem precisa.' WHERE id = ${donor.id}`;
+  await db.sql`INSERT INTO user_preferences (user_id, show_donations) VALUES (${donor.id}, TRUE)`;
 
   const donorCtx: AuthUser = { id: donor.id, role: 'DONOR', ...place, ngoStatus: null };
   for (const [i, it] of DEMO_ITEMS.entries()) {

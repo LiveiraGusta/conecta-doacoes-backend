@@ -185,7 +185,7 @@ Campos do contexto do usuário no feed e no detalhe:
 ### F1. Inicialização do app (boot)
 
 1. Sempre: `GET /auth/me` → `{ user }`. O cookie vai sozinho, e o front não sabe de antemão se há sessão.
-   - `200`: sessão válida. Guarde o `user`: ele diz o perfil, a cidade e o status da ONG.
+   - `200`: sessão válida. Guarde o `user`: ele diz o perfil, a cidade, o status da ONG e as preferências (`user.preferences`: cor do tema, modo claro/escuro e `show_donations`). Aplique o tema já aqui.
    - `401`: sem sessão (visitante) ou sessão expirada. Mostre o login, sem mensagem de erro.
 2. Se for DONOR ou NGO: abra o WebSocket (seção 5) e busque o badge com `GET /chats/unread` → `{ unread_messages, unread_chats }`.
 3. Para uma ONG, rode o `GET /auth/me` de novo ao voltar para o app (foco da aba): é assim que ela descobre que foi aprovada ou rejeitada. Não há evento em tempo real de moderação.
@@ -353,7 +353,25 @@ Peça confirmação nos dois botões ("Tem certeza?"): as duas ações são defi
 
 ### F12. Perfil
 
-- **Editar:** `PATCH /profile` com qualquer combinação de `name`, `city` + `state` (sempre juntos) e `website` (só ONG; `null` apaga) → `200 { user }`. **O e-mail não é editável.** Mudar a cidade muda o feed na hora: recarregue-o.
+- **Editar:** `PATCH /profile` com qualquer combinação dos campos abaixo → `200 { user }`. **O e-mail não é editável.** Mudar a cidade muda o feed na hora: recarregue-o.
+
+  | Campo | Quem | Regra |
+  | --- | --- | --- |
+  | `name` | todos | 2–255 |
+  | `city` + `state` | todos | sempre juntos |
+  | `bio` | todos | descrição da página pessoal, até 500; `null` ou `""` apaga |
+  | `website` | ONG | `http(s)://…`; `null` apaga |
+  | `phone` | ONG | com ou sem máscara; a API devolve só os dígitos com DDD (`11987654321`). Formate na tela e monte o WhatsApp como `https://wa.me/55<phone>` |
+  | `instagram` | ONG | aceita `ong`, `@ong` ou a URL do perfil; a API devolve só o usuário (`ongsalvadora`). Link: `https://instagram.com/<instagram>` |
+  | `accepted_categories` | ONG | array de `Category` (as que a ONG aceita); repetições são ignoradas |
+  | `address` | ONG | `{ cep, street, number, complement?, neighborhood }` completo, ou `null` para apagar. O CEP volta só com dígitos. Para autopreencher, consulte o ViaCEP no front e mande o objeto pronto |
+
+  Um doador que envia campo de ONG recebe `400 VALIDATION_ERROR`, com um item em `details` por campo.
+- **Preferências:** vêm em `user.preferences` e em `GET /profile/preferences` → `{ theme_color, theme_mode, show_donations }`. Os padrões são `AZUL`, `SYSTEM` e `false`.
+  - `PATCH /profile/preferences` com qualquer combinação → `200` com as preferências completas. Vale também para o ADMIN.
+  - `theme_color`: `AZUL`, `VERDE`, `ROXO`, `LARANJA` ou `ROSA`. `theme_mode`: `LIGHT`, `DARK` ou `SYSTEM` (siga o `prefers-color-scheme`).
+  - `show_donations` é só do doador; de ONG ou Admin gera `400` no campo `show_donations`.
+  - Aplique a troca na hora (otimista) e desfaça se a API recusar. Guarde uma cópia no `localStorage` para pintar a tela antes do `GET /auth/me`.
 - **Trocar senha:** `PATCH /profile/password` `{ current_password, new_password }` → `204` com um **cookie novo** para esta sessão.
   - As **outras** sessões (outros aparelhos) caem. A atual continua logada sem nada a fazer. Se houver um WebSocket aberto, reconecte-o, para ele usar o cookie novo.
   - `400 INVALID_CURRENT_PASSWORD`, `400 SAME_PASSWORD`, `429` (5 por minuto).

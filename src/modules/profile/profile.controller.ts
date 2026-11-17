@@ -2,13 +2,22 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { readMultipart } from '../../core/multipart';
 import { clearSessionCookie, setSessionCookie } from '../../core/session-cookie';
 import { toUserDto } from '../auth/auth.dto';
-import type { ChangePasswordBody, DeleteAccountBody, UpdateProfileBody } from './profile.dto';
+import { toPreferencesDto } from '../auth/auth.dto';
+import type { ChangePasswordBody, DeleteAccountBody, UpdatePreferencesBody, UpdateProfileBody } from './profile.dto';
 import type { ProfileService } from './profile.service';
 
 export const createProfileController = (service: ProfileService, opts: { maxFileBytes: number }) => ({
   update: async (req: FastifyRequest<{ Body: UpdateProfileBody }>, reply: FastifyReply) => {
     const user = await service.update(req.user, req.body);
     return reply.status(200).send({ user: toUserDto(user) });
+  },
+
+  getPreferences: async (req: FastifyRequest, reply: FastifyReply) => {
+    return reply.status(200).send(toPreferencesDto(await service.getPreferences(req.user)));
+  },
+
+  updatePreferences: async (req: FastifyRequest<{ Body: UpdatePreferencesBody }>, reply: FastifyReply) => {
+    return reply.status(200).send(toPreferencesDto(await service.updatePreferences(req.user, req.body)));
   },
 
   changePassword: async (req: FastifyRequest<{ Body: ChangePasswordBody }>, reply: FastifyReply) => {

@@ -1,4 +1,17 @@
 import type { Queryable } from '../../core/db';
+import type { Category, UserPreferences } from '../../types';
+
+/** Campos da ONG gravados pelo PATCH /profile (undefined = não mexe). */
+export interface NgoProfilePatch {
+  phone?: string | null;
+  instagram?: string | null;
+  accepted_categories?: Category[];
+  cep?: string | null;
+  street?: string | null;
+  number?: string | null;
+  complement?: string | null;
+  neighborhood?: string | null;
+}
 
 export const profileRepository = {
   async updateUser(q: Queryable, userId: string, f: { name?: string; city?: string; state?: string }): Promise<void> {
@@ -13,6 +26,30 @@ export const profileRepository = {
 
   async updateWebsite(q: Queryable, userId: string, website: string | null): Promise<void> {
     await q`UPDATE ngo_profiles SET website = ${website} WHERE user_id = ${userId}`;
+  },
+
+  async updateBio(q: Queryable, userId: string, bio: string | null): Promise<void> {
+    await q`UPDATE users SET bio = ${bio}, updated_at = NOW() WHERE id = ${userId}`;
+  },
+
+  async updateNgoProfile(q: Queryable, userId: string, patch: NgoProfilePatch): Promise<void> {
+    const fields = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
+    const columns = Object.keys(fields);
+    if (columns.length === 0) return;
+    await q`UPDATE ngo_profiles SET ${q(fields, columns)} WHERE user_id = ${userId}`;
+  },
+
+  async upsertPreferences(q: Queryable, userId: string, p: UserPreferences): Promise<UserPreferences> {
+    const [row] = await q<UserPreferences[]>`
+      INSERT INTO user_preferences (user_id, theme_color, theme_mode, show_donations)
+      VALUES (${userId}, ${p.theme_color}, ${p.theme_mode}, ${p.show_donations})
+      ON CONFLICT (user_id) DO UPDATE SET
+        theme_color = EXCLUDED.theme_color,
+        theme_mode = EXCLUDED.theme_mode,
+        show_donations = EXCLUDED.show_donations,
+        updated_at = NOW()
+      RETURNING theme_color, theme_mode, show_donations`;
+    return row!;
   },
 
   /** Grava o novo hash e marca a troca: tokens emitidos antes passam a ser recusados. */

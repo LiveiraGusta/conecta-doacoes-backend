@@ -79,6 +79,120 @@ describe('V1.1 — Perfil', () => {
     });
   });
 
+  describe('PATCH /profile — página pessoal', () => {
+    it('padrões no /auth/me: bio null e preferências padrão', async () => {
+      const me = await call('GET', '/auth/me', donor);
+      expect(me.json().user).toMatchObject({
+        bio: null,
+        preferences: { theme_color: 'AZUL', theme_mode: 'SYSTEM', show_donations: false },
+      });
+      await expectContract(me, 'GET', '/auth/me');
+    });
+
+    it('doador define e apaga a descrição (vazio vira null)', async () => {
+      const set = await call('PATCH', '/profile', donor, { bio: '  Doo o que não uso mais.  ' });
+      expect(set.json().user.bio).toBe('Doo o que não uso mais.');
+      await expectContract(set, 'PATCH', '/profile');
+      expect((await call('PATCH', '/profile', donor, { bio: '' })).json().user.bio).toBeNull();
+      expect((await call('PATCH', '/profile', donor, { bio: 'a'.repeat(501) })).statusCode).toBe(400);
+    });
+
+    it('ONG grava contato, categorias e endereço normalizados', async () => {
+      const ngo = await createNgo(ctx.db);
+      const res = await call('PATCH', '/profile', ngo, {
+        bio: 'Atendemos 200 famílias.',
+        phone: '(11) 98765-4321',
+        instagram: 'https://www.instagram.com/OngSalvadora/?hl=pt',
+        accepted_categories: ['ROUPAS', 'LIVROS', 'ROUPAS'],
+        address: { cep: '01310-100', street: 'Av. Paulista', number: '1000', neighborhood: 'Bela Vista' },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().user.ngo_profile).toMatchObject({
+        phone: '11987654321',
+        instagram: 'ongsalvadora',
+        accepted_categories: ['ROUPAS', 'LIVROS'],
+        address: { cep: '01310100', street: 'Av. Paulista', number: '1000', complement: null, neighborhood: 'Bela Vista' },
+      });
+      await expectContract(res, 'PATCH', '/profile');
+
+      // Só o que veio muda; null apaga.
+      const cleared = (await call('PATCH', '/profile', ngo, { phone: null, address: null })).json().user.ngo_profile;
+      expect(cleared).toMatchObject({ phone: null, address: null, instagram: 'ongsalvadora', accepted_categories: ['ROUPAS', 'LIVROS'] });
+      expect((await call('PATCH', '/profile', ngo, { instagram: '@outra.ong' })).json().user.ngo_profile.instagram).toBe('outra.ong');
+    });
+
+    it.each([
+      ['telefone sem DDD', { phone: '98765-4321' }, 'phone'],
+      ['instagram com espaço', { instagram: 'ong salvadora' }, 'instagram'],
+      ['categoria inexistente', { accepted_categories: ['MOVEIS'] }, 'accepted_categories.0'],
+      ['CEP curto', { address: { cep: '0131', street: 'Rua A', number: '1', neighborhood: 'Centro' } }, 'address.cep'],
+      ['endereço sem número', { address: { cep: '01310100', street: 'Rua A', neighborhood: 'Centro' } }, 'address.number'],
+    ])('400 para ONG: %s', async (_caso, payload, path) => {
+      const ngo = await createNgo(ctx.db);
+      const res = await call('PATCH', '/profile', ngo, payload);
+      expect(res.statusCode).toBe(400);
+      expect(res.json().details).toEqual(expect.arrayContaining([expect.objectContaining({ path })]));
+    });
+
+    it('400 quando doador envia campos de ONG', async () => {
+      const res = await call('PATCH', '/profile', donor, { phone: '11987654321', accepted_categories: ['ROUPAS'] });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().details.map((d: { path: string }) => d.path)).toEqual(['phone', 'accepted_categories']);
+    });
+  });
+
+  describe('/profile/preferences', () => {
+    it('GET devolve os padrões; PATCH parcial mescla e aparece no /auth/me', async () => {
+      const get = await call('GET', '/profile/preferences', donor);
+      expect(get.json()).toEqual({ theme_color: 'AZUL', theme_mode: 'SYSTEM', show_donations: false });
+      await expectContract(get, 'GET', '/profile/preferences');
+
+      const patch = await call('PATCH', '/profile/preferences', donor, { theme_color: 'VERDE', show_donations: true });
+      expect(patch.statusCode).toBe(200);
+      expect(patch.json()).toEqual({ theme_color: 'VERDE', theme_mode: 'SYSTEM', show_donations: true });
+      await expectContract(patch, 'PATCH', '/profile/preferences');
+
+      expect((await call('PATCH', '/profile/preferences', donor, { theme_mode: 'DARK' })).json()).toEqual({
+        theme_color: 'VERDE',
+        theme_mode: 'DARK',
+        show_donations: true,
+      });
+      expect((await call('GET', '/auth/me', donor)).json().user.preferences).toEqual({
+        theme_color: 'VERDE',
+        theme_mode: 'DARK',
+        show_donations: true,
+      });
+    });
+
+    it('ONG e Admin trocam o tema; show_donations é recusado para a ONG', async () => {
+      const ngo = await createNgo(ctx.db);
+      const admin = await createAdmin(ctx.db);
+      expect((await call('PATCH', '/profile/preferences', ngo, { theme_color: 'ROSA' })).json().theme_color).toBe('ROSA');
+      expect((await call('PATCH', '/profile/preferences', admin, { theme_mode: 'LIGHT' })).json().theme_mode).toBe('LIGHT');
+
+      const res = await call('PATCH', '/profile/preferences', ngo, { show_donations: true });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().details).toEqual([expect.objectContaining({ path: 'show_donations' })]);
+      await expectContract(res, 'PATCH', '/profile/preferences');
+    });
+
+    it.each([
+      ['corpo vazio', {}],
+      ['cor fora da lista', { theme_color: 'AMARELO' }],
+      ['modo fora da lista', { theme_mode: 'AUTO' }],
+      ['show_donations não booleano', { show_donations: 'sim' }],
+    ])('400: %s', async (_caso, payload) => {
+      expect((await call('PATCH', '/profile/preferences', donor, payload)).statusCode).toBe(400);
+    });
+
+    it('a primeira alteração grava uma única linha em user_preferences', async () => {
+      await call('PATCH', '/profile/preferences', donor, { theme_mode: 'DARK' });
+      await call('PATCH', '/profile/preferences', donor, { theme_color: 'ROXO' });
+      const [row] = await ctx.db.sql`SELECT count(*)::int AS n FROM user_preferences WHERE user_id = ${donor.id}`;
+      expect(row!.n).toBe(1);
+    });
+  });
+
   describe('PATCH /profile/password', () => {
     it('troca a senha, derruba as outras sessões e reemite o cookie desta', async () => {
       const old = tokenFromResponse(await login(donor.email, PASSWORD));

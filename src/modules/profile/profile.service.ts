@@ -4,9 +4,11 @@ import { AppError } from '../../core/errors';
 import { detectFileKind, MIME } from '../../core/images';
 import type { PasswordHasher } from '../../core/passwords';
 import type { Storage } from '../../core/storage';
-import type { AuthUser, UserWithProfile } from '../../types';
+import type { AuthUser, Category, UserPreferences, UserWithProfile } from '../../types';
+import { DEFAULT_PREFERENCES } from '../auth/auth.dto';
 import type { AuthRepository } from '../auth/auth.repository';
-import type { ProfileRepository } from './profile.repository';
+import { NGO_ONLY_FIELDS, type AddressBody } from './profile.dto';
+import type { NgoProfilePatch, ProfileRepository } from './profile.repository';
 
 export interface ProfileDeps {
   db: Pick<Db, 'sql' | 'tx'>;
@@ -20,8 +22,20 @@ export interface ProfilePatch {
   name?: string;
   city?: string;
   state?: string;
+  bio?: string | null;
   website?: string | null;
+  phone?: string | null;
+  instagram?: string | null;
+  accepted_categories?: Category[];
+  address?: AddressBody;
 }
+
+/** Endereço null apaga as 5 colunas; objeto grava todas (complemento ausente vira null). */
+const addressColumns = (address: AddressBody | undefined): NgoProfilePatch => {
+  if (address === undefined) return {};
+  if (address === null) return { cep: null, street: null, number: null, complement: null, neighborhood: null };
+  return { ...address, complement: address.complement ?? null };
+};
 
 export const createProfileService = ({ db, profileRepo, authRepo, storage, hasher }: ProfileDeps) => {
   async function loadSelf(userId: string): Promise<UserWithProfile> {
@@ -35,20 +49,51 @@ export const createProfileService = ({ db, profileRepo, authRepo, storage, hashe
   }
 
   return {
-    /** Nome, cidade/UF e (ONG) site. Mudar a cidade muda o feed na hora; os itens já publicados não mudam. */
+    /**
+     * Nome, cidade/UF e descrição; a ONG também edita site, contato, categorias aceitas e endereço.
+     * Mudar a cidade muda o feed na hora; os itens já publicados não mudam.
+     */
     async update(user: AuthUser, patch: ProfilePatch): Promise<UserWithProfile> {
-      if (patch.website !== undefined && user.role !== 'NGO') {
-        throw new AppError('VALIDATION_ERROR', undefined, [{ path: 'website', message: 'Só ONGs têm site no perfil' }]);
+      if (user.role !== 'NGO') {
+        const details = NGO_ONLY_FIELDS.filter((f) => patch[f] !== undefined).map((path) => ({
+          path,
+          message: 'Campo disponível só para ONGs',
+        }));
+        if (details.length) throw new AppError('VALIDATION_ERROR', undefined, details);
       }
       await db.tx(async (tx) => {
-        const { website, ...fields } = patch;
-        if (Object.values(fields).some((v) => v !== undefined)) await profileRepo.updateUser(tx, user.id, fields);
+        const { name, city, state, bio, website, phone, instagram, accepted_categories, address } = patch;
+        if ([name, city, state].some((v) => v !== undefined)) await profileRepo.updateUser(tx, user.id, { name, city, state });
+        if (bio !== undefined) await profileRepo.updateBio(tx, user.id, bio);
         if (website !== undefined) await profileRepo.updateWebsite(tx, user.id, website);
+        if (user.role === 'NGO') {
+          await profileRepo.updateNgoProfile(tx, user.id, { phone, instagram, accepted_categories, ...addressColumns(address) });
+        }
       });
       return loadSelf(user.id);
     },
 
-    /** Troca a senha e invalida os tokens emitidos antes (o frontend faz login de novo). */
+    async getPreferences(user: AuthUser): Promise<UserPreferences> {
+      return (await loadSelf(user.id)).preferences ?? DEFAULT_PREFERENCES;
+    },
+
+    /** Mescla o que veio com o que está gravado (ou os padrões). `show_donations` é só do doador. */
+    async updatePreferences(user: AuthUser, patch: Partial<UserPreferences>): Promise<UserPreferences> {
+      if (patch.show_donations !== undefined && user.role !== 'DONOR') {
+        throw new AppError('VALIDATION_ERROR', undefined, [
+          { path: 'show_donations', message: 'Só doadores escolhem mostrar as doações na página pessoal' },
+        ]);
+      }
+      const current = (await loadSelf(user.id)).preferences ?? DEFAULT_PREFERENCES;
+      const next: UserPreferences = {
+        theme_color: patch.theme_color ?? current.theme_color,
+        theme_mode: patch.theme_mode ?? current.theme_mode,
+        show_donations: patch.show_donations ?? current.show_donations,
+      };
+      return profileRepo.upsertPreferences(db.sql, user.id, next);
+    },
+
+    /** Troca a senha e invalida os tokens emitidos antes (o controller reemite o cookie desta sessão). */
     async changePassword(user: AuthUser, current: string, next: string): Promise<void> {
       const self = await loadSelf(user.id);
       await checkPassword(self, current);

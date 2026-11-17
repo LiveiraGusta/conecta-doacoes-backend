@@ -29,6 +29,9 @@ function setup(repo: Partial<ProfileRepository> = {}) {
   const profileRepo = {
     updateUser: vi.fn(async () => {}),
     updateWebsite: vi.fn(async () => {}),
+    updateBio: vi.fn(async () => {}),
+    updateNgoProfile: vi.fn(async () => {}),
+    upsertPreferences: vi.fn(async (_q: unknown, _id: string, p: unknown) => p),
     replaceDocumentUnlessActive: vi.fn(async () => ({ replaced: true as const, oldPath: 'n1/old.pdf' })),
     hasActiveNegotiations: vi.fn(async () => false),
     deleteAvailableItemsOfDonor: vi.fn(async () => ['https://storage.test/items/i1/a.webp']),
@@ -43,11 +46,45 @@ function setup(repo: Partial<ProfileRepository> = {}) {
 }
 
 describe('profileService.update', () => {
-  it('doador não pode ter site', async () => {
-    await expect(setup().service.update(DONOR, { website: 'https://x.dev' })).rejects.toMatchObject({
+  it('doador não pode enviar campos de ONG: um erro por campo', async () => {
+    await expect(
+      setup().service.update(DONOR, { website: 'https://x.dev', phone: '11987654321', address: null }),
+    ).rejects.toMatchObject({
       code: 'VALIDATION_ERROR',
-      details: [{ path: 'website', message: 'Só ONGs têm site no perfil' }],
+      details: [
+        { path: 'website', message: 'Campo disponível só para ONGs' },
+        { path: 'phone', message: 'Campo disponível só para ONGs' },
+        { path: 'address', message: 'Campo disponível só para ONGs' },
+      ],
     });
+  });
+
+  it('endereço null apaga as 5 colunas; objeto grava todas, com complemento ausente como null', async () => {
+    const { service, profileRepo } = setup();
+    await service.update(NGO, { address: null });
+    expect(profileRepo.updateNgoProfile).toHaveBeenLastCalledWith(expect.anything(), 'n1', {
+      phone: undefined,
+      instagram: undefined,
+      accepted_categories: undefined,
+      cep: null,
+      street: null,
+      number: null,
+      complement: null,
+      neighborhood: null,
+    });
+    await service.update(NGO, { address: { cep: '01310100', street: 'Av. Paulista', number: '1000', neighborhood: 'Bela Vista' } });
+    expect(profileRepo.updateNgoProfile).toHaveBeenLastCalledWith(
+      expect.anything(),
+      'n1',
+      expect.objectContaining({ cep: '01310100', street: 'Av. Paulista', complement: null }),
+    );
+  });
+
+  it('bio vale para doador e não mexe no perfil de ONG', async () => {
+    const { service, profileRepo } = setup();
+    await service.update(DONOR, { bio: 'Doo o que não uso mais.' });
+    expect(profileRepo.updateBio).toHaveBeenCalledWith(expect.anything(), 'd1', 'Doo o que não uso mais.');
+    expect(profileRepo.updateNgoProfile).not.toHaveBeenCalled();
   });
 
   it('ONG atualiza só o site sem tocar em users', async () => {
@@ -55,6 +92,26 @@ describe('profileService.update', () => {
     await service.update(NGO, { website: null });
     expect(profileRepo.updateWebsite).toHaveBeenCalledWith(expect.anything(), 'n1', null);
     expect(profileRepo.updateUser).not.toHaveBeenCalled();
+  });
+});
+
+describe('profileService preferências', () => {
+  it('sem linha gravada devolve os padrões', async () => {
+    expect(await setup().service.getPreferences(DONOR)).toEqual({ theme_color: 'AZUL', theme_mode: 'SYSTEM', show_donations: false });
+  });
+
+  it('mescla o patch com os padrões e grava a linha completa', async () => {
+    const { service, profileRepo } = setup();
+    const result = await service.updatePreferences(DONOR, { theme_mode: 'DARK' });
+    expect(result).toEqual({ theme_color: 'AZUL', theme_mode: 'DARK', show_donations: false });
+    expect(profileRepo.upsertPreferences).toHaveBeenCalledWith(expect.anything(), 'd1', result);
+  });
+
+  it('show_donations é só do doador', async () => {
+    await expect(setup().service.updatePreferences(NGO, { show_donations: true })).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      details: [{ path: 'show_donations' }],
+    });
   });
 });
 

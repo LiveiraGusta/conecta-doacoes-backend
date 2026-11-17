@@ -3,9 +3,9 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { requireRole, userRateLimitKey } from '../../core/auth';
 import { errorResponses } from '../../core/dto';
-import { MeResponseDto } from '../auth/auth.dto';
+import { MeResponseDto, PreferencesDto } from '../auth/auth.dto';
 import type { ProfileController } from './profile.controller';
-import { ChangePasswordBody, DeleteAccountBody, UpdateProfileBody } from './profile.dto';
+import { ChangePasswordBody, DeleteAccountBody, UpdatePreferencesBody, UpdateProfileBody } from './profile.dto';
 
 const NoContent = z.null().describe('Sem conteúdo');
 
@@ -16,11 +16,30 @@ export function profileRoutes(app: FastifyInstance, ctrl: ProfileController) {
     preHandler: [requireRole('DONOR', 'NGO')],
     schema: {
       tags: ['Profile'],
-      summary: 'Editar nome, cidade/UF e site (ONG)',
+      summary: 'Editar nome, cidade/UF e descrição; ONG: site, contato, categorias aceitas e endereço',
       body: UpdateProfileBody,
       response: { 200: MeResponseDto, ...errorResponses(400, 401, 403) },
     },
     handler: ctrl.update,
+  });
+
+  r.get('/profile/preferences', {
+    schema: {
+      tags: ['Profile'],
+      summary: 'Preferências de tema e privacidade (padrões se nunca alteradas)',
+      response: { 200: PreferencesDto, ...errorResponses(401) },
+    },
+    handler: ctrl.getPreferences,
+  });
+
+  r.patch('/profile/preferences', {
+    schema: {
+      tags: ['Profile'],
+      summary: 'Alterar cor do tema, modo claro/escuro e (doador) mostrar doações',
+      body: UpdatePreferencesBody,
+      response: { 200: PreferencesDto, ...errorResponses(400, 401, 403) },
+    },
+    handler: ctrl.updatePreferences,
   });
 
   r.patch('/profile/password', {

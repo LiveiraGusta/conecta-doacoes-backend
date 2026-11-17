@@ -734,7 +734,10 @@ paths:
   /profile:
     patch:
       tags: [Profile]
-      summary: Editar nome, cidade/UF e site (ONG)
+      summary: Editar nome, cidade/UF e descrição; ONG também site, contato, categorias aceitas e endereço
+      description: |
+        Só os campos enviados mudam. `null` (ou texto vazio) apaga. Campos marcados "Só ONG" enviados por um
+        doador geram `400 VALIDATION_ERROR`, com um item em `details` por campo.
       requestBody:
         required: true
         content:
@@ -746,7 +749,32 @@ paths:
                 name: { type: string, minLength: 2, maxLength: 255 }
                 city: { type: string, minLength: 2, maxLength: 100 }
                 state: { $ref: '#/components/schemas/UF' }
+                bio: { type: [string, 'null'], maxLength: 500, description: 'Descrição da página pessoal; null apaga' }
                 website: { type: [string, 'null'], format: uri, description: 'Só ONG; null apaga' }
+                phone:
+                  type: [string, 'null']
+                  description: 'Só ONG. Com ou sem máscara; a API guarda só os dígitos com DDD (10 ou 11). null apaga'
+                  examples: ['(11) 98765-4321']
+                instagram:
+                  type: [string, 'null']
+                  description: 'Só ONG. Aceita "ong", "@ong" ou a URL do perfil; a API guarda só o usuário. null apaga'
+                accepted_categories:
+                  type: array
+                  maxItems: 4
+                  items: { $ref: '#/components/schemas/Category' }
+                  description: 'Só ONG. Categorias que a ONG aceita; repetições são ignoradas'
+                address:
+                  description: 'Só ONG. Endereço completo (complemento opcional) ou null para apagar'
+                  oneOf:
+                    - type: 'null'
+                    - type: object
+                      required: [cep, street, number, neighborhood]
+                      properties:
+                        cep: { type: string, description: '8 dígitos, com ou sem hífen', examples: ['01310-100'] }
+                        street: { type: string, minLength: 2, maxLength: 200 }
+                        number: { type: string, minLength: 1, maxLength: 20 }
+                        complement: { type: string, maxLength: 100 }
+                        neighborhood: { type: string, minLength: 2, maxLength: 100 }
               dependentRequired:
                 city: [state]
                 state: [city]
@@ -785,6 +813,41 @@ paths:
         '409':
           description: HAS_ACTIVE_NEGOTIATIONS
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /profile/preferences:
+    get:
+      tags: [Profile]
+      summary: Preferências de tema e privacidade
+      description: Quem nunca alterou recebe os padrões (AZUL, SYSTEM, show_donations false). Também vêm em `user.preferences`.
+      responses:
+        '200':
+          description: Preferências atuais
+          content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    patch:
+      tags: [Profile]
+      summary: Alterar cor do tema, modo claro/escuro e (doador) mostrar doações
+      description: |
+        Parcial: só o que vier muda. Vale para DONOR, NGO e ADMIN. `show_donations` é só do doador:
+        enviado por ONG ou Admin gera `400 VALIDATION_ERROR` no campo `show_donations`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                theme_color: { $ref: '#/components/schemas/ThemeColor' }
+                theme_mode: { $ref: '#/components/schemas/ThemeMode' }
+                show_donations: { type: boolean }
+      responses:
+        '200':
+          description: Preferências atualizadas
+          content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/CsrfHeaderMissing' }
 
   /profile/password:
     patch:
@@ -969,19 +1032,47 @@ components:
                 error: { type: string }
 
     # ── Módulo 1 ──
+    Address:
+      type: object
+      required: [cep, street, number, complement, neighborhood]
+      properties:
+        cep: { type: string, pattern: '^[0-9]{8}$', examples: ['01310100'] }
+        street: { type: string }
+        number: { type: string }
+        complement: { type: [string, 'null'] }
+        neighborhood: { type: string }
+
     NgoProfile:
       type: object
-      required: [id, cnpj, website, status, rejection_reason]
+      required: [id, cnpj, website, status, rejection_reason, phone, instagram, accepted_categories, address]
       properties:
         id: { type: string, format: uuid }
         cnpj: { type: string, examples: ['12.345.678/0001-99'] }
         website: { type: [string, 'null'], format: uri }
         status: { $ref: '#/components/schemas/NgoStatus' }
         rejection_reason: { type: [string, 'null'] }
+        phone: { type: [string, 'null'], pattern: '^[1-9][0-9]{9,10}$', description: 'Só dígitos, com DDD', examples: ['11987654321'] }
+        instagram: { type: [string, 'null'], description: 'Usuário, sem @', examples: ['ongsalvadora'] }
+        accepted_categories: { type: array, items: { $ref: '#/components/schemas/Category' } }
+        address:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/Address'
+
+    ThemeColor: { type: string, enum: [AZUL, VERDE, ROXO, LARANJA, ROSA] }
+    ThemeMode: { type: string, enum: [LIGHT, DARK, SYSTEM], description: 'SYSTEM segue o prefers-color-scheme do aparelho' }
+
+    Preferences:
+      type: object
+      required: [theme_color, theme_mode, show_donations]
+      properties:
+        theme_color: { $ref: '#/components/schemas/ThemeColor' }
+        theme_mode: { $ref: '#/components/schemas/ThemeMode' }
+        show_donations: { type: boolean, description: 'Doador: mostrar as doações concluídas na página pessoal. Sempre false para ONG e Admin' }
 
     User:
       type: object
-      required: [id, name, email, role, city, state]
+      required: [id, name, email, role, city, state, bio, preferences]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -989,6 +1080,8 @@ components:
         role: { $ref: '#/components/schemas/Role' }
         city: { type: string }
         state: { $ref: '#/components/schemas/UF' }
+        bio: { type: [string, 'null'], description: 'Descrição da página pessoal' }
+        preferences: { $ref: '#/components/schemas/Preferences' }
         ngo_profile: { $ref: '#/components/schemas/NgoProfile' }
 
     AuthResponse:

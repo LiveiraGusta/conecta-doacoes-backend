@@ -6,6 +6,8 @@ export type Category = 'ROUPAS' | 'BRINQUEDOS' | 'ALIMENTOS' | 'LIVROS';
 export type ItemStatus = 'DISPONIVEL' | 'EM_PROGRESSO' | 'DOADO';
 /** Status que aparece em item_events (CANCELADO nunca fica gravado em items.status). */
 export type EventStatus = ItemStatus | 'CANCELADO';
+export type ThemeColor = 'AZUL' | 'VERDE' | 'ROXO' | 'LARANJA' | 'ROSA';
+export type ThemeMode = 'LIGHT' | 'DARK' | 'SYSTEM';
 
 export interface User {
   id: string;
@@ -15,6 +17,8 @@ export interface User {
   role: Role;
   city: string;
   state: string;
+  /** Descrição da página pessoal (até 500). */
+  bio?: string | null;
   created_at: Date;
   updated_at?: Date | null;
   password_changed_at?: Date | null;
@@ -29,11 +33,29 @@ export interface NgoProfile {
   document_url: string; // caminho no bucket privado
   status: NgoStatus;
   rejection_reason: string | null;
+  /** Só dígitos, com DDD (10 ou 11). */
+  phone?: string | null;
+  /** Usuário do Instagram, sem @. */
+  instagram?: string | null;
+  accepted_categories?: Category[];
+  /** Endereço: todos nulos ou todos preenchidos (o complemento é opcional). */
+  cep?: string | null;
+  street?: string | null;
+  number?: string | null;
+  complement?: string | null;
+  neighborhood?: string | null;
 }
 
-/** Usuário com o perfil de ONG (quando role = NGO). */
+export interface UserPreferences {
+  theme_color: ThemeColor;
+  theme_mode: ThemeMode;
+  show_donations: boolean;
+}
+
+/** Usuário com o perfil de ONG (quando role = NGO) e as preferências (null = padrões). */
 export interface UserWithProfile extends User {
   ngo_profile: NgoProfile | null;
+  preferences?: UserPreferences | null;
 }
 
 /** O que o hook de autenticação lê do banco a cada requisição. */

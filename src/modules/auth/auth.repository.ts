@@ -2,7 +2,9 @@ import type { Queryable } from '../../core/db';
 import type { AuthContext, NgoProfile, NgoStatus, Role, User, UserWithProfile } from '../../types';
 
 const userWithProfile = (q: Queryable) => q`
-  SELECT u.*, (SELECT to_jsonb(np) FROM ngo_profiles np WHERE np.user_id = u.id) AS ngo_profile
+  SELECT u.*,
+    (SELECT to_jsonb(np) FROM ngo_profiles np WHERE np.user_id = u.id) AS ngo_profile,
+    (SELECT to_jsonb(up) - 'user_id' - 'updated_at' FROM user_preferences up WHERE up.user_id = u.id) AS preferences
   FROM users u`;
 
 export const authRepository = {
