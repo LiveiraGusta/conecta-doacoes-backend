@@ -1,0 +1,35 @@
+// Lista única de códigos de erro: a mesma do openapi.yaml (módulos 1–4).
+export const ERRORS = {
+  VALIDATION_ERROR: { status: 400, message: 'Dados inválidos.' },
+  INVALID_PHOTO_COUNT: { status: 400, message: 'É obrigatório enviar exatamente 3 fotos do item.' },
+  INVALID_PHOTO: { status: 400, message: 'Envie fotos em JPG, PNG ou WEBP de até 5 MB.' },
+  INVALID_DOCUMENT: { status: 400, message: 'Envie 1 documento em PDF, JPG, PNG ou WEBP de até 5 MB.' },
+  UNAUTHORIZED: { status: 401, message: 'Faça login para continuar.' },
+  INVALID_CREDENTIALS: { status: 401, message: 'E-mail ou senha incorretos.' },
+  FORBIDDEN: { status: 403, message: 'Você não tem permissão para esta ação.' },
+  NGO_NOT_APPROVED: { status: 403, message: 'Sua ONG ainda não foi aprovada.' },
+  OUT_OF_REGION: { status: 403, message: 'Este item não está na sua cidade.' },
+  NOT_FOUND: { status: 404, message: 'Recurso não encontrado.' },
+  ITEM_NOT_FOUND: { status: 404, message: 'Item não encontrado.' },
+  NGO_NOT_FOUND: { status: 404, message: 'ONG não encontrada.' },
+  INTEREST_NOT_FOUND: { status: 404, message: 'Você não demonstrou interesse neste item.' },
+  CONFLICT: { status: 409, message: 'Conflito com o estado atual do recurso.' },
+  EMAIL_TAKEN: { status: 409, message: 'Já existe uma conta com este e-mail.' },
+  CNPJ_TAKEN: { status: 409, message: 'Já existe uma ONG com este CNPJ.' },
+  ITEM_NOT_AVAILABLE: { status: 409, message: 'Este item já está em negociação ou foi doado.' },
+  ITEM_NOT_IN_PROGRESS: { status: 409, message: 'Este item não está em negociação.' },
+  ALREADY_INTERESTED: { status: 409, message: 'Você já demonstrou interesse neste item.' },
+  ALREADY_SELECTED: {
+    status: 409,
+    message: 'Sua ONG já foi escolhida para este item. Para desistir, cancele a negociação.',
+  },
+  NGO_NOT_INTERESTED: { status: 409, message: 'Esta ONG não demonstrou interesse no item.' },
+  NGO_NOT_ACTIVE: { status: 409, message: 'Esta ONG não está aprovada no momento.' },
+  CHAT_CLOSED: { status: 409, message: 'Esta conversa não está aberta.' },
+  PAYLOAD_TOO_LARGE: { status: 413, message: 'Envio muito grande.' },
+  TOO_MANY_REQUESTS: { status: 429, message: 'Muitas requisições. Tente de novo em instantes.' },
+  INTERNAL_ERROR: { status: 500, message: 'Erro inesperado. Tente de novo.' },
+  SERVICE_UNAVAILABLE: { status: 503, message: 'Serviço sobrecarregado. Tente de novo em instantes.' },
+} as const satisfies Record<string, { status: number; message: string }>;
+
+export type ErrorCode = keyof typeof ERRORS;
