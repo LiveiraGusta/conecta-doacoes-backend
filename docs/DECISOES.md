@@ -112,3 +112,6 @@ Mudanças pedidas no planejamento do frontend React. O plano e o registro comple
 | 0.1 | Teste que fixa a lista exata de rotas públicas | Revisão | Um `public: true` acidental quebra o build |
 | 0.1 | Swagger: esquema `cookieAuth` e um script no Swagger UI que adiciona o header anti-CSRF e envia o cookie | Claude | O "Try it out" continua funcionando: o login pelo Swagger grava o cookie |
 | 0.1 | Ordem das fotos do item garantida por teste (`photos[0]` = 1ª foto enviada) | Revisão | O frontend permite reordenar as fotos e escolher a capa sem mudança no backend |
+| 0.2 | Campo `notes` ("Observações do doador") no item: opcional, até 1000 caracteres, com constraint no banco (migração 007) | Usuário | Vem em `Item` e `ItemDetail` (chave sempre presente, `null` quando vazio) e não no `FeedItem`, porque o card não mostra |
+| 0.2 | `notes` não entra na busca do feed (`search` continua em título e descrição) | Claude | A busca segue o contrato atual. Dá para incluir depois, se o produto pedir |
+| 0.2 | Observações não aparecem para o visitante sem login | Usuário (plano) | A rota pública de detalhe (sub-fase 0.2b-3) usa um DTO sem `notes` |

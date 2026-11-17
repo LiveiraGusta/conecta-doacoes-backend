@@ -18,6 +18,7 @@ export const PublishItemFields = z
   .object({
     title: text(3, 255),
     description: optionalText(2000),
+    notes: optionalText(1000),
     category: Category,
     city: optionalText(100).pipe(z.string().min(2).optional()),
     state: z.preprocess((v) => (v === '' ? undefined : v), UF.optional()),
@@ -50,6 +51,7 @@ export const ItemDto = z
     donor_id: z.uuid(),
     title: z.string(),
     description: z.string().nullable(),
+    notes: z.string().nullable(),
     category: Category,
     city: z.string(),
     state: z.string(),
@@ -115,6 +117,7 @@ const baseItem = (item: Item, photos: { id: string; photo_url: string }[]) => ({
   donor_id: item.donor_id,
   title: item.title,
   description: item.description,
+  notes: item.notes,
   category: item.category,
   city: item.city,
   state: item.state,

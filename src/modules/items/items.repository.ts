@@ -28,12 +28,12 @@ export const itemsRepository = {
   /** Item + fotos na ordem dada. A primeira foto recebe o menor created_at. */
   async insertWithPhotos(
     q: Queryable,
-    item: Pick<Item, 'id' | 'donor_id' | 'title' | 'description' | 'category' | 'city' | 'state'>,
+    item: Pick<Item, 'id' | 'donor_id' | 'title' | 'description' | 'notes' | 'category' | 'city' | 'state'>,
     photoUrls: string[],
   ): Promise<Item & { photos: ItemPhoto[] }> {
     const [row] = await q<Item[]>`
-      INSERT INTO items (id, donor_id, title, description, category, city, state)
-      VALUES (${item.id}, ${item.donor_id}, ${item.title}, ${item.description}, ${item.category},
+      INSERT INTO items (id, donor_id, title, description, notes, category, city, state)
+      VALUES (${item.id}, ${item.donor_id}, ${item.title}, ${item.description}, ${item.notes}, ${item.category},
               ${item.city}, ${item.state})
       RETURNING *`;
     const photos = await q<ItemPhoto[]>`

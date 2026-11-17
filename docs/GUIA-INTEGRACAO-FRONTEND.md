@@ -263,6 +263,7 @@ O e-mail é normalizado pela API (espaços removidos e minúsculas), então não
 | --- | --- |
 | `title` | 3–255 |
 | `description` | Opcional, até 2000 |
+| `notes` | Opcional, até 1000. "Observações do doador" (retirada, conservação, horários). Vem em `Item` e `ItemDetail`, **não** no `FeedItem`: mostre só no detalhe |
 | `category` | `ROUPAS`, `BRINQUEDOS`, `ALIMENTOS` ou `LIVROS` |
 | `city` + `state` | Opcionais, **sempre os dois juntos**. O padrão é a cidade/UF do doador |
 | `photos` | **Exatamente 3 arquivos**, todos no campo `photos` (repita o `append`) |
@@ -271,6 +272,7 @@ O e-mail é normalizado pela API (espaços removidos e minúsculas), então não
 const fd = new FormData();
 fd.append('title', titulo); fd.append('category', categoria);
 if (descricao) fd.append('description', descricao);
+if (observacoes) fd.append('notes', observacoes);
 fotos.forEach((f) => fd.append('photos', f)); // 3 vezes
 const item = await api<Item>('/items', { method: 'POST', body: fd });
 ```

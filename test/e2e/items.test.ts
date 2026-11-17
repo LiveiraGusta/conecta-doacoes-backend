@@ -249,6 +249,48 @@ describe('Módulo 2 — Vitrine & Doações', () => {
       await expectContract(res, 'GET', '/items/{itemId}');
     });
 
+  });
+
+  describe('observações do doador (notes)', () => {
+    const base = { title: 'Casaco infantil', category: 'ROUPAS' };
+    const threePhotos = () => [photo(jpg, 0), photo(jpg, 1), photo(jpg, 2)];
+
+    it('publica com notes; aparecem na criação e no detalhe, mas não no feed', async () => {
+      const notes = 'Retirada à noite, depois das 18h.';
+      const created = await publishOnce({ ...base, notes }, threePhotos());
+      expect(created.statusCode).toBe(201);
+      expect(created.json().notes).toBe(notes);
+      await expectContract(created, 'POST', '/items');
+
+      const detail = await get(`/items/${created.json().id}`, donor);
+      expect(detail.json().notes).toBe(notes);
+      await expectContract(detail, 'GET', '/items/{itemId}');
+
+      const feed = (await get('/items/feed', donor)).json();
+      expect(feed.data[0]).not.toHaveProperty('notes');
+    });
+
+    it('sem notes (ou só espaços) grava null', async () => {
+      for (const notes of [undefined, '   ']) {
+        const res = await publishOnce({ ...base, notes }, threePhotos());
+        expect(res.statusCode).toBe(201);
+        expect(res.json().notes).toBeNull();
+      }
+    });
+
+    it('400 VALIDATION_ERROR com mais de 1000 caracteres, com o erro no campo notes', async () => {
+      const res = await publishOnce({ ...base, notes: 'a'.repeat(1001) }, threePhotos());
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ error: 'VALIDATION_ERROR', details: [{ path: 'notes' }] });
+      expect((await publishOnce({ ...base, notes: 'a'.repeat(1000) }, threePhotos())).statusCode).toBe(201);
+    });
+
+    it('o banco também recusa mais de 1000 caracteres (constraint)', async () => {
+      await expect(createItem(ctx.db, donor, { notes: 'a'.repeat(1001) })).rejects.toThrow(/items_notes_length/);
+    });
+  });
+
+  describe('GET /items/:itemId — erros', () => {
     it('404 ITEM_NOT_FOUND e 400 para id que não é UUID', async () => {
       const res = await get(`/items/${randomUUID()}`, donor);
       expect(res.statusCode).toBe(404);

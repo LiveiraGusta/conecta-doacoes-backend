@@ -296,6 +296,7 @@ paths:
               properties:
                 title: { type: string, minLength: 3, maxLength: 255 }
                 description: { type: string, maxLength: 2000 }
+                notes: { type: string, maxLength: 1000, description: 'Observações do doador (retirada, conservação…). Opcional' }
                 category: { $ref: '#/components/schemas/Category' }
                 city: { type: string, minLength: 2, maxLength: 100, description: 'Default: cidade do doador' }
                 state: { $ref: '#/components/schemas/UF' }
@@ -1023,12 +1024,13 @@ components:
 
     Item:
       type: object
-      required: [id, donor_id, title, category, city, state, status, photos, created_at]
+      required: [id, donor_id, title, notes, category, city, state, status, photos, created_at]
       properties:
         id: { type: string, format: uuid }
         donor_id: { type: string, format: uuid }
         title: { type: string }
         description: { type: [string, 'null'] }
+        notes: { type: [string, 'null'], description: 'Observações do doador. Não aparece no FeedItem' }
         category: { $ref: '#/components/schemas/Category' }
         city: { type: string }
         state: { type: string }

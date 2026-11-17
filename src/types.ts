@@ -56,6 +56,8 @@ export interface Item {
   donor_id: string;
   title: string;
   description: string | null;
+  /** Observações do doador (retirada, conservação…). Só no detalhe do item. */
+  notes: string | null;
   category: Category;
   city: string;
   state: string;

@@ -17,6 +17,7 @@ export interface ItemsDeps {
 export interface PublishInput {
   title: string;
   description?: string;
+  notes?: string;
   category: Category;
   city?: string;
   state?: string;
@@ -69,6 +70,7 @@ export const createItemsService = ({ db, itemsRepo, eventsRepo, storage }: Items
               donor_id: donor.id,
               title: input.title,
               description: input.description ?? null,
+              notes: input.notes ?? null,
               category: input.category,
               city: input.city ?? donor.city,
               state: input.state ?? donor.state,

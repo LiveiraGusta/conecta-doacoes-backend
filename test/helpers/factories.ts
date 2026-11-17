@@ -85,6 +85,7 @@ export const imageBuffer = (format: 'png' | 'jpeg' | 'webp' = 'png', size = 32) 
 export interface ItemOpts {
   title?: string;
   description?: string | null;
+  notes?: string | null;
   category?: 'ROUPAS' | 'BRINQUEDOS' | 'ALIMENTOS' | 'LIVROS';
   city?: string;
   state?: string;
@@ -96,8 +97,9 @@ export interface ItemOpts {
 /** Item com 3 fotos direto no banco (sem passar pelo upload). */
 export async function createItem(db: Db, donor: Pick<User, 'id' | 'city' | 'state'>, opts: ItemOpts = {}) {
   const [item] = await db.sql<{ id: string; created_at: Date }[]>`
-    INSERT INTO items (donor_id, title, description, category, city, state, status, selected_ngo_id, created_at)
+    INSERT INTO items (donor_id, title, description, notes, category, city, state, status, selected_ngo_id, created_at)
     VALUES (${donor.id}, ${opts.title ?? `Item ${unique()}`}, ${opts.description === undefined ? 'Em bom estado' : opts.description},
+            ${opts.notes ?? null},
             ${opts.category ?? 'ROUPAS'}, ${opts.city ?? donor.city}, ${opts.state ?? donor.state},
             ${opts.status ?? 'DISPONIVEL'}, ${opts.selected_ngo_id ?? null}, ${opts.created_at ?? new Date()})
     RETURNING id, created_at`;
