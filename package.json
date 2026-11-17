@@ -1,0 +1,59 @@
+{
+  "name": "conecta-doacoes-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsup",
+    "start": "node dist/server.js",
+    "start:prod": "node dist/migrate.js && node dist/server.js",
+    "migrate": "tsx scripts/migrate.ts",
+    "seed": "tsx scripts/seed.ts",
+    "test": "node scripts/vitest.mjs --project unit",
+    "test:int": "node scripts/vitest.mjs run --project int",
+    "test:all": "node scripts/vitest.mjs run --coverage",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "storage:check": "tsx scripts/storage-check.ts",
+    "seed:prod": "node dist/seed.js"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.4.3",
+    "@fastify/helmet": "^13.2.0",
+    "@fastify/jwt": "^10.2.8",
+    "@fastify/multipart": "^10.1.9",
+    "@fastify/rate-limit": "^11.2.2",
+    "@fastify/swagger": "^9.9.5",
+    "@fastify/swagger-ui": "^6.1.4",
+    "@fastify/under-pressure": "^9.2.1",
+    "@fastify/websocket": "^11.3.7",
+    "@supabase/supabase-js": "^2.119.0",
+    "bcrypt": "^6.0.0",
+    "dotenv": "^18.0.10",
+    "fastify": "^5.12.8",
+    "fastify-plugin": "^6.0.1",
+    "fastify-type-provider-zod": "^7.0.0",
+    "postgres": "^4.1.1",
+    "sharp": "^0.35.5",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@apidevtools/swagger-parser": "^13.1.0",
+    "@types/bcrypt": "^6.0.0",
+    "@types/node": "^26.6.6",
+    "@types/ws": "^8.18.2",
+    "@vitest/coverage-v8": "^5.1.0",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "eslint": "^10.15.0",
+    "tsup": "^9.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.73.0",
+    "vitest": "^5.1.0"
+  }
+}

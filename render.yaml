@@ -1,0 +1,35 @@
+# Blueprint do Render (https://render.com/docs/blueprint-spec).
+# Os segredos ficam com sync: false e são preenchidos no painel na primeira criação.
+services:
+  - type: web
+    name: conecta-doacoes-api
+    runtime: node
+    plan: free
+    region: oregon
+    # NODE_ENV=production também vale no build: sem --include=dev o tsup não é instalado.
+    buildCommand: npm ci --include=dev && npm run build
+    # Aplica as migrações pendentes e sobe a API.
+    startCommand: npm run start:prod
+    # Só recebe tráfego quando o banco responde.
+    healthCheckPath: /health/ready
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY
+        value: "true"
+      - key: SWAGGER_ENABLED
+        value: "false"
+      - key: LOG_LEVEL
+        value: info
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: DATABASE_URL # pooler do Supabase, porta 6543
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: JWT_SECRET # openssl rand -base64 48
+        sync: false
+      - key: CORS_ORIGIN # ex.: https://conectadoacoes.vercel.app
+        sync: false
