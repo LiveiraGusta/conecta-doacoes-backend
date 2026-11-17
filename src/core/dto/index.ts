@@ -33,6 +33,8 @@ export const Role = z.enum(['DONOR', 'NGO', 'ADMIN']);
 export const NgoStatus = z.enum(['PENDENTE_APROVACAO', 'ATIVO', 'REJEITADO']);
 export const Category = z.enum(['ROUPAS', 'BRINQUEDOS', 'ALIMENTOS', 'LIVROS']);
 export const ItemStatus = z.enum(['DISPONIVEL', 'EM_PROGRESSO', 'DOADO']);
+export const ThemeColor = z.enum(['AZUL', 'VERDE', 'ROXO', 'LARANJA', 'ROSA']);
+export const ThemeMode = z.enum(['LIGHT', 'DARK', 'SYSTEM']);
 
 // ── Helpers de entrada ──
 /** Texto obrigatório: trim antes de validar. */

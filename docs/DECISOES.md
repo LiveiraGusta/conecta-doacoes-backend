@@ -1,6 +1,6 @@
 # Registro de decisões — Conecta Doações API
 
-Decisões tomadas na implementação do MVP (V1.0) e da V1.1, até a fase D da V1.1.
+Decisões tomadas na implementação do MVP (V1.0), da V1.1 e da integração com o frontend.
 
 **Como ler a coluna "Quem tomou":**
 
@@ -92,3 +92,53 @@ As decisões maiores têm ADR próprio em [`adr/`](adr/).
 | D | `unread_count` entra no `ChatSummary` e há `GET /chats/unread` para o badge | Claude | Acréscimos sem quebra: o frontend atual continua funcionando |
 | D | Evento `unread.updated` em **todas** as conexões do usuário, sem `subscribe` (canal por usuário no `RealtimeBus`) | Claude | O badge atualiza fora da sala e entre abas. Custa uma consulta por evento e por conexão. Fecha o "a revisitar" do ADR-12 |
 | D | Tabela `chat_reads` (migração 006), com uma linha por usuário e conversa | Claude | Leitura persistida no servidor: vale entre aparelhos |
+
+## Integração com o frontend (fase 0)
+
+Mudanças pedidas no planejamento do frontend React. O plano e o registro completo ficam no repositório do frontend (`docs/specs/plano-frontend.md` e `docs/DECISOES.md`). Cada sub-fase tem uma branch própria a partir da `develop`.
+
+| Fase | Decisão | Quem tomou | Consequência |
+| --- | --- | --- | --- |
+| 0.1 | Sessão em cookie httpOnly `cd_session` emitido pelo backend, só cookie (Bearer removido); login e cadastro devolvem `{ user }` | Usuário | Ver o [ADR-13](adr/ADR-13-sessao-cookie.md). `AuthResponse` mudou no openapi. Os testes mandam `cookie` (`authHeader` e `sessionCookie` em `test/helpers/factories.ts`) |
+| 0.1 | Produção no mesmo site: `app.<domínio>` + `api.<domínio>`, cookie `SameSite=Lax` | Usuário (após a revisão técnica) | Com domínios diferentes, o Safari bloquearia o cookie e o WebSocket ficaria sem sessão. Novas variáveis `COOKIE_SECURE` (obrigatória `true` em produção) e `COOKIE_DOMAIN` |
+| 0.1 | Anti-CSRF: `X-Requested-With: XMLHttpRequest` obrigatório em POST, PUT, PATCH e DELETE, inclusive no login; sem ele, `403 CSRF_HEADER_MISSING` | Usuário | Código novo no catálogo. Nas rotas fechadas a checagem roda depois da autenticação (sem sessão continua 401). O `inject` dos testes já manda o header; `ctx.rawInject` testa a falta dele |
+| 0.1 | `POST /auth/logout` pública e idempotente; atributos do cookie centralizados em `src/core/session-cookie.ts` | Claude (aprovado) | O navegador só apaga o cookie se o `clear` repetir os mesmos atributos |
+| 0.1 | Trocar a senha reemite o cookie da sessão atual; excluir a conta apaga o cookie | Claude (aprovado) | O frontend não precisa logar de novo depois da troca. As outras sessões continuam caindo |
+| 0.1 | `@fastify/cookie` registrado antes do rate limit; `@fastify/jwt` com `verify.onlyCookie` | Revisão | A chave de rate limit por usuário lê o cookie. Sem `onlyCookie`, o plugin daria prioridade ao header `Authorization` |
+| 0.1 | CORS com `credentials: true`, `x-requested-with` liberado e `x-request-id` exposto | Revisão | O front cross-origin lê o id do erro. Lista de origens única (`allowedOrigins` em `src/core/env.ts`) para o CORS e o WebSocket |
+| 0.1 | WebSocket autentica pelo cookie no handshake e confere o `Origin`; sai a mensagem `{type:"auth"}` e o timer de 5 s | Usuário | Spec do WebSocket e ADR-12 atualizados. Mensagens enviadas antes do `ready` esperam a autenticação |
+| 0.1 | `Origin` ausente ou fora da lista fecha com **4403** (e não 4401) | Claude | 4401 faria o frontend tratar como sessão expirada e deslogar; 4403 indica "não reconectar" sem mexer na sessão. O plano dizia 4401 |
+| 0.1 | Rota do WebSocket continua `public` para o hook global e valida dentro do handler | Revisão | Um 401 no upgrade chegaria ao navegador como 1006, sem motivo |
+| 0.1 | Teste que fixa a lista exata de rotas públicas | Revisão | Um `public: true` acidental quebra o build |
+| 0.1 | Swagger: esquema `cookieAuth` e um script no Swagger UI que adiciona o header anti-CSRF e envia o cookie | Claude | O "Try it out" continua funcionando: o login pelo Swagger grava o cookie |
+| 0.1 | Ordem das fotos do item garantida por teste (`photos[0]` = 1ª foto enviada) | Revisão | O frontend permite reordenar as fotos e escolher a capa sem mudança no backend |
+| 0.2 | Campo `notes` ("Observações do doador") no item: opcional, até 1000 caracteres, com constraint no banco (migração 007) | Usuário | Vem em `Item` e `ItemDetail` (chave sempre presente, `null` quando vazio) e não no `FeedItem`, porque o card não mostra |
+| 0.2 | `notes` não entra na busca do feed (`search` continua em título e descrição) | Claude | A busca segue o contrato atual. Dá para incluir depois, se o produto pedir |
+| 0.2 | Observações não aparecem para o visitante sem login | Usuário (plano) | A rota pública de detalhe (sub-fase 0.2b-3) usa um DTO sem `notes` |
+| 0.2b-1 | Descrição (`bio`, até 500) para doador e ONG; ONG ganha telefone, Instagram, categorias aceitas e endereço (migração 008) | Usuário | `PATCH /profile` estendido. Doador que envia campo de ONG recebe `400` com um item de `details` por campo |
+| 0.2b-1 | Telefone guardado só com dígitos e DDD (10 ou 11), aceitando máscara na entrada | Usuário | O front formata e monta o link do WhatsApp. Só números brasileiros |
+| 0.2b-1 | Instagram guardado só como usuário, sem @ e em minúsculas; a entrada aceita `@ong` ou a URL do perfil | Usuário | Regex do Instagram (letras, números, ponto e `_`, até 30) na API e no banco |
+| 0.2b-1 | Endereço da ONG é tudo ou nada (complemento opcional), com CEP de 8 dígitos; o autopreenchimento pelo ViaCEP fica no front | Usuário | Constraint `ngo_profiles_address_complete` no banco. Na API, `address` é um objeto (`null` apaga as 5 colunas) |
+| 0.2b-1 | Endereço visível a usuários logados só quando a ONG estiver `ATIVO` | Usuário | Vale na rota `GET /users/:id` (0.2b-3). Nesta fase só gravamos; a própria ONG sempre vê o seu |
+| 0.2b-1 | Preferências (`theme_color`, `theme_mode`, `show_donations`) em tabela própria; sem linha = padrões | Usuário | Vêm em `user.preferences` no `/auth/me`, no login e no cadastro (o tema aplica no boot sem chamada extra), e em `GET`/`PATCH /profile/preferences` |
+| 0.2b-1 | `show_donations` só para doador; ONG e Admin recebem `400` no campo | Claude (aprovado) | Admin troca o tema, mas não tem página pessoal |
+| 0.2b-1 | Colunas de avatar e banner ficam para a migração da 0.2b-2, e não na 008 como dizia o plano | Claude | Cada sub-fase traz a sua migração e os seus testes |
+| 0.2b-1 | O teste de contrato aceita propriedades extras nas respostas (não pegou os campos novos antes do openapi) | Claude | Reforça o item do plano: os schemas das rotas públicas (0.2b-3) terão `additionalProperties: false` |
+| 0.2b-1 | O seed de demonstração ganhou descrição, contato, endereço e categorias na ONG ativa, e `show_donations` na doadora | Claude | O frontend tem dados para a página pessoal. O seed não foi rodado de novo no banco de dev |
+| 0.2b-2 | Foto de perfil (doador e ONG) e banner (só ONG), com `PUT`/`DELETE` em `/profile/avatar` e `/profile/banner` (migração 009) | Usuário | Resposta `{ user }`. `DELETE` idempotente |
+| 0.2b-2 | Arquivos no bucket público de itens, pasta `profiles/<user_id>/` | Usuário | Sem configuração nova no Supabase. O nome do bucket fica menos semântico |
+| 0.2b-2 | A API também garante a proporção: corte ao centro (fit cover) em 512×512 e 1500×500, WEBP q80 sem metadados | Usuário | Mesmo um envio fora da proporção, direto pela API, fica certo na tela |
+| 0.2b-2 | Limite de 5 MB, igual às fotos de item; `400 INVALID_PHOTO` e `413 PAYLOAD_TOO_LARGE` | Usuário | Rate limit de 10 envios por minuto, por usuário |
+| 0.2b-2 | Guardar a URL pública (`avatar_url`, `banner_url`), como em `item_photos`, e não o caminho | Claude | Reaproveita `publicUrl`/`pathFromPublicUrl`. O plano falava em `avatar_path` |
+| 0.2b-2 | Trocar sobe a nova, grava a URL e só então apaga a antiga; se gravar falhar, a nova é apagada | Claude | Nunca fica um usuário apontando para arquivo inexistente. Coberto por teste unitário |
+| 0.2b-2 | Excluir a conta também apaga a foto de perfil e o banner, e limpa `bio` e `avatar_url` | Claude | A anonimização não deixa imagem nem descrição da pessoa |
+| 0.2b-3 | Página pessoal `GET /users/:id` e doações `GET /users/:id/donations`, num módulo novo `users` | Usuário | Doador com nome abreviado; ONG com nome completo, banner e categorias |
+| 0.2b-3 | Telefone, Instagram e endereço da ONG só para ONG `ATIVO`, salvo para a própria ONG | Usuário | ONG ainda não verificada não recebe contato direto pela página |
+| 0.2b-3 | Doações do doador ocultas → `200 { total: 0, data: [], hidden: true }` e `donations_count: null` | Usuário | Não revela se existem doações. O próprio doador sempre vê as suas |
+| 0.2b-3 | Admin, conta excluída e id inexistente → `404 USER_NOT_FOUND` (código novo) | Usuário | Admin não tem página pessoal |
+| 0.2b-3 | Rotas de visitante `GET /public/items`, `/public/items/:id` e `/public/users/:id`, com DTO próprio e `additionalProperties: false` | Usuário | Sem nome, foto, banner, endereço, contato, observações ou contagem de interessadas. Testes conferem as chaves e procuram vazamentos no corpo |
+| 0.2b-3 | Visitante: feed de todas as cidades; item `DOADO` e ONG que não está `ATIVO` dão 404 | Usuário | O público só vê o que já está no feed |
+| 0.2b-3 | Rate limit das rotas públicas: 60 por minuto, por IP (`PUBLIC_RATE_LIMIT_MAX`) | Claude | Separado do limite geral, para conter raspagem sem afetar quem está logado |
+| 0.2b-3 | `avatar_url` também no doador do feed/detalhe, nas ONGs interessadas e na contraparte do chat | Usuário | Aditivo. Nas denúncias do Admin, `Counterpart` continua sem foto (o campo é opcional no openapi) |
+| 0.2b-3 | O feed do visitante reaproveita `findFeed` sem cidade/UF e um id de visitante que nunca existe | Claude | Uma consulta só para os dois modos; `has_user_interest` sempre `false` para o visitante |
+| 0.2b-3 | Fim da fase 0: o backend tem tudo o que o plano do frontend pede | Claude | Próximo passo: fase 1a do frontend |

@@ -13,6 +13,7 @@ const item = (over: Partial<Item> = {}): Item => ({
   id: 'i1',
   donor_id: DONOR.id,
   title: 'Casaco',
+  notes: null,
   description: null,
   category: 'ROUPAS',
   city: 'São Paulo',

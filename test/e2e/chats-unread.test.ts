@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import type { User } from '../../src/types';
 import { buildTestApp, closeTestApp, resetDb, type TestContext } from '../helpers/app';
 import { expectContract } from '../helpers/contract';
-import { addInterest, authHeader, createDonor, createItem, createNgo, tokenFor } from '../helpers/factories';
+import { addInterest, authHeader, createDonor, createItem, createNgo, sessionCookie, tokenFor } from '../helpers/factories';
 import { openWs, type TestWs } from '../helpers/ws';
 
 type Who = Pick<User, 'id' | 'role'>;
@@ -119,9 +119,8 @@ describe('V1.1 — Mensagens não lidas', () => {
 
   describe('WebSocket: unread.updated', () => {
     async function connect(who: Who) {
-      const s = await openWs(ctx.app);
+      const s = await openWs(ctx.app, { cookie: sessionCookie(tokenFor(ctx.app, who)) });
       sockets.push(s);
-      s.send({ type: 'auth', token: tokenFor(ctx.app, who) });
       await s.next({ type: 'ready' });
       return s;
     }

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import sharp from 'sharp';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { User } from '../../src/types';
 import { buildTestApp, closeTestApp, resetDb, type TestContext } from '../helpers/app';
@@ -75,6 +76,23 @@ describe('Módulo 2 — Vitrine & Doações', () => {
       expect(events).toEqual([{ from_status: null, to_status: 'DISPONIVEL', actor_id: donor.id }]);
     });
 
+    it('preserva a ordem do upload: photos[0] é a 1ª foto enviada (a capa escolhida no front)', async () => {
+      // Larguras diferentes identificam cada foto depois da conversão para WEBP.
+      const widths = [40, 24, 32];
+      const files = await Promise.all(widths.map((w, i) => imageBuffer('jpeg', w).then((b) => photo(b, i))));
+      const created = (await publishOnce(fields, files)).json();
+      const detail = (await ctx.app.inject({ method: 'GET', url: `/api/v1/items/${created.id}`, headers: authHeader(ctx.app, donor) })).json();
+
+      for (const body of [created, detail]) {
+        const stored = body.photos.map((p: { photo_url: string }) => {
+          const path = ctx.storage.pathFromPublicUrl(p.photo_url)!;
+          return ctx.storage.files.get(`items/${path}`)!.body;
+        });
+        const actual = await Promise.all(stored.map(async (b: Buffer) => (await sharp(b).metadata()).width));
+        expect(actual).toEqual(widths);
+      }
+    });
+
     it.each([0, 2])('400 INVALID_PHOTO_COUNT com %i fotos', async (n) => {
       const res = await publishOnce(fields, Array.from({ length: n }, (_, i) => photo(jpg, i)));
       expect(res.statusCode).toBe(400);
@@ -135,7 +153,7 @@ describe('Módulo 2 — Vitrine & Doações', () => {
       const body = res.json();
       expect(body.total).toBe(3);
       expect(body.data.map((i: { id: string }) => i.id)).toEqual([recent.id, emNegociacao.id, old.id]);
-      expect(body.data[0].donor).toEqual({ id: donor.id, name: 'Marina S.' });
+      expect(body.data[0].donor).toEqual({ id: donor.id, name: 'Marina S.', avatar_url: null });
       expect(body.data[0].photos).toHaveLength(3);
       await expectContract(res, 'GET', '/items/feed');
 
@@ -231,6 +249,48 @@ describe('Módulo 2 — Vitrine & Doações', () => {
       await expectContract(res, 'GET', '/items/{itemId}');
     });
 
+  });
+
+  describe('observações do doador (notes)', () => {
+    const base = { title: 'Casaco infantil', category: 'ROUPAS' };
+    const threePhotos = () => [photo(jpg, 0), photo(jpg, 1), photo(jpg, 2)];
+
+    it('publica com notes; aparecem na criação e no detalhe, mas não no feed', async () => {
+      const notes = 'Retirada à noite, depois das 18h.';
+      const created = await publishOnce({ ...base, notes }, threePhotos());
+      expect(created.statusCode).toBe(201);
+      expect(created.json().notes).toBe(notes);
+      await expectContract(created, 'POST', '/items');
+
+      const detail = await get(`/items/${created.json().id}`, donor);
+      expect(detail.json().notes).toBe(notes);
+      await expectContract(detail, 'GET', '/items/{itemId}');
+
+      const feed = (await get('/items/feed', donor)).json();
+      expect(feed.data[0]).not.toHaveProperty('notes');
+    });
+
+    it('sem notes (ou só espaços) grava null', async () => {
+      for (const notes of [undefined, '   ']) {
+        const res = await publishOnce({ ...base, notes }, threePhotos());
+        expect(res.statusCode).toBe(201);
+        expect(res.json().notes).toBeNull();
+      }
+    });
+
+    it('400 VALIDATION_ERROR com mais de 1000 caracteres, com o erro no campo notes', async () => {
+      const res = await publishOnce({ ...base, notes: 'a'.repeat(1001) }, threePhotos());
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ error: 'VALIDATION_ERROR', details: [{ path: 'notes' }] });
+      expect((await publishOnce({ ...base, notes: 'a'.repeat(1000) }, threePhotos())).statusCode).toBe(201);
+    });
+
+    it('o banco também recusa mais de 1000 caracteres (constraint)', async () => {
+      await expect(createItem(ctx.db, donor, { notes: 'a'.repeat(1001) })).rejects.toThrow(/items_notes_length/);
+    });
+  });
+
+  describe('GET /items/:itemId — erros', () => {
     it('404 ITEM_NOT_FOUND e 400 para id que não é UUID', async () => {
       const res = await get(`/items/${randomUUID()}`, donor);
       expect(res.statusCode).toBe(404);

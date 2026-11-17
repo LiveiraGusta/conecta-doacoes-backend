@@ -22,6 +22,8 @@ const VIEW: ItemView = {
   id: 'i1',
   donor_id: 'd1',
   title: 'Casaco',
+  notes: null,
+  donor_avatar_url: null,
   description: null,
   category: 'ROUPAS',
   city: 'São Paulo',

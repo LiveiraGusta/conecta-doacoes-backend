@@ -10,13 +10,21 @@ info:
 
     Convenções: JSON em snake_case, datas ISO 8601 em UTC, IDs UUID, erros no formato
     `{ error, message, details? }`. Paginação com `limit` (1–50, default 30) e `offset`.
+
+    Sessão (ADR-13): login e cadastros gravam o cookie httpOnly `cd_session` (SameSite=Lax, Path=/api/v1,
+    7 dias). O navegador o envia sozinho; o cliente usa `credentials: 'include'`. O header
+    `Authorization: Bearer` não é aceito. `POST /auth/logout` apaga o cookie.
+
+    Anti-CSRF: toda requisição POST, PUT, PATCH ou DELETE precisa do header `X-Requested-With: XMLHttpRequest`,
+    inclusive as rotas públicas de /auth. Sem ele: `403 CSRF_HEADER_MISSING`. Nas rotas logadas,
+    a sessão é conferida antes: sem cookie válido a resposta é 401.
 servers:
   - url: http://localhost:3333/api/v1
     description: Local
   - url: https://<api>/api/v1
     description: Produção
 security:
-  - bearerAuth: []
+  - cookieAuth: []
 tags:
   - name: Auth
     description: Módulo 1 — Autenticação
@@ -28,12 +36,19 @@ tags:
     description: Módulo 3 — Match Invertido
   - name: Chats
     description: |
-      Módulo 4 — Chat & Encerramento. Em tempo real: WebSocket em /api/v1/chats/ws
-      (protocolo em "Spec do Chat em Tempo Real — WebSocket.md"); as rotas REST abaixo continuam valendo.
+      Módulo 4 — Chat & Encerramento. Em tempo real: WebSocket em /api/v1/chats/ws, autenticado pelo cookie
+      de sessão no handshake (protocolo em "Spec do Chat em Tempo Real — WebSocket.md"); as rotas REST abaixo
+      continuam valendo.
   - name: Reports
     description: Módulo 4 — Denúncias
   - name: Profile
     description: Perfil do usuário logado
+  - name: Users
+    description: Página pessoal de doadores e ONGs (logado)
+  - name: Public
+    description: |
+      Visitante sem login. DTOs próprios, com `additionalProperties: false`: nunca trazem nome, foto,
+      banner, endereço, contato, observações do item nem contagem de interessadas. Rate limit por IP.
   - name: Health
     description: Liveness e readiness (fora de /api/v1)
 
@@ -67,6 +82,7 @@ paths:
         '409':
           description: EMAIL_TAKEN
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '403': { $ref: '#/components/responses/CsrfHeaderMissing' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /auth/register/ngo:
@@ -104,6 +120,7 @@ paths:
         '409':
           description: EMAIL_TAKEN ou CNPJ_TAKEN
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '403': { $ref: '#/components/responses/CsrfHeaderMissing' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /auth/login:
@@ -131,6 +148,7 @@ paths:
         '401':
           description: INVALID_CREDENTIALS
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '403': { $ref: '#/components/responses/CsrfHeaderMissing' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /auth/me:
@@ -148,6 +166,19 @@ paths:
                 properties:
                   user: { $ref: '#/components/schemas/User' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Sair (apaga o cookie de sessão)
+      description: |
+        Pública e idempotente: responde 204 com ou sem sessão. Com o cookie httpOnly, só o servidor
+        consegue apagá-lo; o `Set-Cookie` repete os mesmos atributos do login, com validade expirada.
+      security: []
+      responses:
+        '204': { description: Sessão encerrada }
+        '403': { $ref: '#/components/responses/CsrfHeaderMissing' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /auth/password/forgot:
     post:
@@ -171,6 +202,7 @@ paths:
       responses:
         '202': { description: Pedido recebido }
         '400': { $ref: '#/components/responses/ValidationError' }
+        '403': { $ref: '#/components/responses/CsrfHeaderMissing' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /auth/password/reset:
@@ -194,6 +226,7 @@ paths:
         '400':
           description: INVALID_RESET_TOKEN (inválido, expirado ou já usado) ou VALIDATION_ERROR
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '403': { $ref: '#/components/responses/CsrfHeaderMissing' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /admin/ngos:
@@ -269,6 +302,7 @@ paths:
               properties:
                 title: { type: string, minLength: 3, maxLength: 255 }
                 description: { type: string, maxLength: 2000 }
+                notes: { type: string, maxLength: 1000, description: 'Observações do doador (retirada, conservação…). Opcional' }
                 category: { $ref: '#/components/schemas/Category' }
                 city: { type: string, minLength: 2, maxLength: 100, description: 'Default: cidade do doador' }
                 state: { $ref: '#/components/schemas/UF' }
@@ -706,7 +740,10 @@ paths:
   /profile:
     patch:
       tags: [Profile]
-      summary: Editar nome, cidade/UF e site (ONG)
+      summary: Editar nome, cidade/UF e descrição; ONG também site, contato, categorias aceitas e endereço
+      description: |
+        Só os campos enviados mudam. `null` (ou texto vazio) apaga. Campos marcados "Só ONG" enviados por um
+        doador geram `400 VALIDATION_ERROR`, com um item em `details` por campo.
       requestBody:
         required: true
         content:
@@ -718,7 +755,32 @@ paths:
                 name: { type: string, minLength: 2, maxLength: 255 }
                 city: { type: string, minLength: 2, maxLength: 100 }
                 state: { $ref: '#/components/schemas/UF' }
+                bio: { type: [string, 'null'], maxLength: 500, description: 'Descrição da página pessoal; null apaga' }
                 website: { type: [string, 'null'], format: uri, description: 'Só ONG; null apaga' }
+                phone:
+                  type: [string, 'null']
+                  description: 'Só ONG. Com ou sem máscara; a API guarda só os dígitos com DDD (10 ou 11). null apaga'
+                  examples: ['(11) 98765-4321']
+                instagram:
+                  type: [string, 'null']
+                  description: 'Só ONG. Aceita "ong", "@ong" ou a URL do perfil; a API guarda só o usuário. null apaga'
+                accepted_categories:
+                  type: array
+                  maxItems: 4
+                  items: { $ref: '#/components/schemas/Category' }
+                  description: 'Só ONG. Categorias que a ONG aceita; repetições são ignoradas'
+                address:
+                  description: 'Só ONG. Endereço completo (complemento opcional) ou null para apagar'
+                  oneOf:
+                    - type: 'null'
+                    - type: object
+                      required: [cep, street, number, neighborhood]
+                      properties:
+                        cep: { type: string, description: '8 dígitos, com ou sem hífen', examples: ['01310-100'] }
+                        street: { type: string, minLength: 2, maxLength: 200 }
+                        number: { type: string, minLength: 1, maxLength: 20 }
+                        complement: { type: string, maxLength: 100 }
+                        neighborhood: { type: string, minLength: 2, maxLength: 100 }
               dependentRequired:
                 city: [state]
                 state: [city]
@@ -737,7 +799,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
     delete:
       tags: [Profile]
-      summary: Excluir a conta (anonimização)
+      summary: Excluir a conta (anonimização; apaga o cookie de sessão)
       requestBody:
         required: true
         content:
@@ -758,10 +820,150 @@ paths:
           description: HAS_ACTIVE_NEGOTIATIONS
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
 
+  /profile/avatar:
+    put:
+      tags: [Profile]
+      summary: Enviar foto de perfil (DONOR e NGO)
+      description: |
+        multipart/form-data com **1 arquivo** no campo `avatar` (JPG, PNG ou WEBP, até 5 MB; o tipo é conferido
+        pelo conteúdo). A API corta ao centro na proporção certa e grava WEBP 512×512. A imagem anterior é apagada.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [avatar]
+              properties:
+                avatar: { type: string, format: binary }
+      responses:
+        '200':
+          description: Imagem trocada
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+        '400':
+          description: INVALID_PHOTO (tipo inválido, nenhum arquivo no campo `avatar` ou mais de um)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413':
+          description: PAYLOAD_TOO_LARGE (arquivo acima de 5 MB)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [Profile]
+      summary: Remover foto de perfil (DONOR e NGO; idempotente)
+      responses:
+        '200':
+          description: Imagem removida
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /profile/banner:
+    put:
+      tags: [Profile]
+      summary: Enviar banner da ONG (só NGO)
+      description: |
+        multipart/form-data com **1 arquivo** no campo `banner` (JPG, PNG ou WEBP, até 5 MB; o tipo é conferido
+        pelo conteúdo). A API corta ao centro na proporção certa e grava WEBP 1500×500. A imagem anterior é apagada.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [banner]
+              properties:
+                banner: { type: string, format: binary }
+      responses:
+        '200':
+          description: Imagem trocada
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+        '400':
+          description: INVALID_PHOTO (tipo inválido, nenhum arquivo no campo `banner` ou mais de um)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413':
+          description: PAYLOAD_TOO_LARGE (arquivo acima de 5 MB)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [Profile]
+      summary: Remover banner da ONG (só NGO; idempotente)
+      responses:
+        '200':
+          description: Imagem removida
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /profile/preferences:
+    get:
+      tags: [Profile]
+      summary: Preferências de tema e privacidade
+      description: Quem nunca alterou recebe os padrões (AZUL, SYSTEM, show_donations false). Também vêm em `user.preferences`.
+      responses:
+        '200':
+          description: Preferências atuais
+          content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    patch:
+      tags: [Profile]
+      summary: Alterar cor do tema, modo claro/escuro e (doador) mostrar doações
+      description: |
+        Parcial: só o que vier muda. Vale para DONOR, NGO e ADMIN. `show_donations` é só do doador:
+        enviado por ONG ou Admin gera `400 VALIDATION_ERROR` no campo `show_donations`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                theme_color: { $ref: '#/components/schemas/ThemeColor' }
+                theme_mode: { $ref: '#/components/schemas/ThemeMode' }
+                show_donations: { type: boolean }
+      responses:
+        '200':
+          description: Preferências atualizadas
+          content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/CsrfHeaderMissing' }
+
   /profile/password:
     patch:
       tags: [Profile]
-      summary: Trocar senha (invalida tokens anteriores)
+      summary: Trocar senha (encerra as outras sessões e renova o cookie desta)
+      description: |
+        Tokens emitidos antes da troca deixam de valer em todos os aparelhos. A resposta traz um `Set-Cookie`
+        novo para a sessão atual, que continua logada.
       requestBody:
         required: true
         content:
@@ -778,6 +980,7 @@ paths:
           description: INVALID_CURRENT_PASSWORD, SAME_PASSWORD ou VALIDATION_ERROR
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/CsrfHeaderMissing' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /profile/ngo-document:
@@ -811,6 +1014,97 @@ paths:
         '409':
           description: NGO_ALREADY_ACTIVE
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  # ───────────────────────── Página pessoal e visitante ─────────────────────────
+  /users/{userId}:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    get:
+      tags: [Users]
+      summary: Página pessoal de um doador ou ONG
+      description: |
+        Doador: nome abreviado ("Marina S."); `donations_count` é null se ele escolheu não mostrar as doações
+        (exceto para ele mesmo). ONG: nome completo e o bloco `ngo`; telefone, Instagram e endereço só
+        vêm quando a ONG está ATIVO (ou para ela mesma). Admin e conta excluída: 404 USER_NOT_FOUND.
+      responses:
+        '200':
+          description: Página pessoal
+          content: { application/json: { schema: { $ref: '#/components/schemas/UserProfile' } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/UserNotFound' }
+
+  /users/{userId}/donations:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    get:
+      tags: [Users]
+      summary: Doações concluídas do doador ou recebidas pela ONG
+      description: |
+        Doador com as doações ocultas (e quem pede não é ele): `{ total: 0, data: [], hidden: true }`,
+        sem revelar se existem doações. Itens DOADO, dos mais recentes para os mais antigos.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Lista paginada
+          content: { application/json: { schema: { $ref: '#/components/schemas/UserDonations' } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/UserNotFound' }
+
+  /public/items:
+    get:
+      tags: [Public]
+      summary: Feed para visitante (todas as cidades)
+      description: Itens DISPONIVEL e EM_PROGRESSO de todas as cidades, mais novos primeiro.
+      security: []
+      parameters:
+        - { name: category, in: query, schema: { $ref: '#/components/schemas/Category' } }
+        - { name: search, in: query, schema: { type: string, minLength: 1, maxLength: 100 } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Lista paginada
+          content: { application/json: { schema: { $ref: '#/components/schemas/PublicItemList' } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /public/items/{itemId}:
+    parameters:
+      - $ref: '#/components/parameters/ItemId'
+    get:
+      tags: [Public]
+      summary: Detalhe para visitante
+      description: Só itens que estão no feed (DISPONIVEL ou EM_PROGRESSO). DOADO ou inexistente → 404.
+      security: []
+      responses:
+        '200':
+          description: Item
+          content: { application/json: { schema: { $ref: '#/components/schemas/PublicItem' } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/ItemNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /public/users/{userId}:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    get:
+      tags: [Public]
+      summary: Página pessoal para visitante
+      description: |
+        Sem nome, foto, banner, endereço nem contatos. Só doadores e ONGs ATIVO; ONG pendente ou rejeitada,
+        Admin e conta excluída → 404 USER_NOT_FOUND.
+      security: []
+      responses:
+        '200':
+          description: Perfil público
+          content: { application/json: { schema: { $ref: '#/components/schemas/PublicUser' } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/UserNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   # ───────────────────────── Health (fora de /api/v1) ─────────────────────────
   /health:
@@ -856,19 +1150,27 @@ paths:
 
 components:
   securitySchemes:
-    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: cd_session
+      description: JWT em cookie httpOnly gravado pelo login/cadastro (ADR-13). Não é lido pelo JS do navegador.
 
   parameters:
     Limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 30 } }
     Offset: { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
     ItemId: { name: itemId, in: path, required: true, schema: { type: string, format: uuid } }
+    UserId: { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
 
   responses:
     Unauthorized:
       description: UNAUTHORIZED
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
     Forbidden:
-      description: FORBIDDEN
+      description: FORBIDDEN (ou CSRF_HEADER_MISSING, se faltar o header X-Requested-With)
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    CsrfHeaderMissing:
+      description: CSRF_HEADER_MISSING (falta o header X-Requested-With)
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
     ValidationError:
       description: VALIDATION_ERROR
@@ -884,6 +1186,9 @@ components:
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
     NotInProgress:
       description: ITEM_NOT_IN_PROGRESS
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    UserNotFound:
+      description: USER_NOT_FOUND (Admin, conta excluída, inexistente ou, no público, ONG não ATIVO)
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
     ReportNotFound:
       description: REPORT_NOT_FOUND
@@ -930,19 +1235,48 @@ components:
                 error: { type: string }
 
     # ── Módulo 1 ──
+    Address:
+      type: object
+      required: [cep, street, number, complement, neighborhood]
+      properties:
+        cep: { type: string, pattern: '^[0-9]{8}$', examples: ['01310100'] }
+        street: { type: string }
+        number: { type: string }
+        complement: { type: [string, 'null'] }
+        neighborhood: { type: string }
+
     NgoProfile:
       type: object
-      required: [id, cnpj, website, status, rejection_reason]
+      required: [id, cnpj, website, status, rejection_reason, banner_url, phone, instagram, accepted_categories, address]
       properties:
         id: { type: string, format: uuid }
         cnpj: { type: string, examples: ['12.345.678/0001-99'] }
         website: { type: [string, 'null'], format: uri }
         status: { $ref: '#/components/schemas/NgoStatus' }
         rejection_reason: { type: [string, 'null'] }
+        banner_url: { type: [string, 'null'], format: uri, description: 'Banner 1500×500 (WEBP); null = sem banner' }
+        phone: { type: [string, 'null'], pattern: '^[1-9][0-9]{9,10}$', description: 'Só dígitos, com DDD', examples: ['11987654321'] }
+        instagram: { type: [string, 'null'], description: 'Usuário, sem @', examples: ['ongsalvadora'] }
+        accepted_categories: { type: array, items: { $ref: '#/components/schemas/Category' } }
+        address:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/Address'
+
+    ThemeColor: { type: string, enum: [AZUL, VERDE, ROXO, LARANJA, ROSA] }
+    ThemeMode: { type: string, enum: [LIGHT, DARK, SYSTEM], description: 'SYSTEM segue o prefers-color-scheme do aparelho' }
+
+    Preferences:
+      type: object
+      required: [theme_color, theme_mode, show_donations]
+      properties:
+        theme_color: { $ref: '#/components/schemas/ThemeColor' }
+        theme_mode: { $ref: '#/components/schemas/ThemeMode' }
+        show_donations: { type: boolean, description: 'Doador: mostrar as doações concluídas na página pessoal. Sempre false para ONG e Admin' }
 
     User:
       type: object
-      required: [id, name, email, role, city, state]
+      required: [id, name, email, role, city, state, bio, avatar_url, preferences]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -950,13 +1284,16 @@ components:
         role: { $ref: '#/components/schemas/Role' }
         city: { type: string }
         state: { $ref: '#/components/schemas/UF' }
+        bio: { type: [string, 'null'], description: 'Descrição da página pessoal' }
+        avatar_url: { type: [string, 'null'], format: uri, description: 'Foto de perfil 512×512 (WEBP); null = mostrar as iniciais' }
+        preferences: { $ref: '#/components/schemas/Preferences' }
         ngo_profile: { $ref: '#/components/schemas/NgoProfile' }
 
     AuthResponse:
       type: object
-      required: [token, user]
+      description: O token não vem no corpo; ele vai no cookie httpOnly `cd_session` (header Set-Cookie).
+      required: [user]
       properties:
-        token: { type: string }
         user: { $ref: '#/components/schemas/User' }
 
     AdminNgo:
@@ -985,12 +1322,13 @@ components:
 
     Item:
       type: object
-      required: [id, donor_id, title, category, city, state, status, photos, created_at]
+      required: [id, donor_id, title, notes, category, city, state, status, photos, created_at]
       properties:
         id: { type: string, format: uuid }
         donor_id: { type: string, format: uuid }
         title: { type: string }
         description: { type: [string, 'null'] }
+        notes: { type: [string, 'null'], description: 'Observações do doador. Não aparece no FeedItem' }
         category: { $ref: '#/components/schemas/Category' }
         city: { type: string }
         state: { type: string }
@@ -1005,6 +1343,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         name: { type: string, examples: ['Marina S.'] }
+        avatar_url: { type: [string, 'null'], format: uri, description: 'Foto de perfil; null = iniciais' }
 
     FeedItem:
       type: object
@@ -1057,6 +1396,7 @@ components:
         interest_id: { type: string, format: uuid }
         ngo_id: { type: string, format: uuid }
         name: { type: string }
+        avatar_url: { type: [string, 'null'], format: uri }
         city: { type: string }
         state: { type: string }
         cnpj: { type: string, examples: ['12.345.678/0001-99'] }
@@ -1089,6 +1429,7 @@ components:
         id: { type: string, format: uuid }
         name: { type: string }
         role: { type: string, enum: [DONOR, NGO] }
+        avatar_url: { type: [string, 'null'], format: uri, description: 'Vem na lista de conversas e na sala (não nas denúncias)' }
 
     ChatSummary:
       type: object
@@ -1215,3 +1556,82 @@ components:
               reason: { type: [string, 'null'] }
               created_at: { type: string, format: date-time }
         messages: { type: array, items: { $ref: '#/components/schemas/Message' } }
+
+    # ── Página pessoal e visitante ──
+    UserProfile:
+      type: object
+      required: [id, role, name, avatar_url, bio, city, state, member_since, donations_count, ngo]
+      properties:
+        id: { type: string, format: uuid }
+        role: { type: string, enum: [DONOR, NGO] }
+        name: { type: string, description: 'Doador abreviado ("Marina S."); ONG com o nome completo' }
+        avatar_url: { type: [string, 'null'], format: uri }
+        bio: { type: [string, 'null'] }
+        city: { type: string }
+        state: { $ref: '#/components/schemas/UF' }
+        member_since: { type: string, format: date-time }
+        donations_count:
+          type: [integer, 'null']
+          minimum: 0
+          description: Doações concluídas (doadas ou recebidas). null = doador escolheu não mostrar
+        ngo:
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [status, website, banner_url, accepted_categories, phone, instagram, address]
+              properties:
+                status: { $ref: '#/components/schemas/NgoStatus' }
+                website: { type: [string, 'null'], format: uri }
+                banner_url: { type: [string, 'null'], format: uri }
+                accepted_categories: { type: array, items: { $ref: '#/components/schemas/Category' } }
+                phone: { type: [string, 'null'], description: 'Só de ONG ATIVO (ou para ela mesma)' }
+                instagram: { type: [string, 'null'], description: 'Só de ONG ATIVO (ou para ela mesma)' }
+                address:
+                  description: 'Só de ONG ATIVO (ou para ela mesma)'
+                  oneOf:
+                    - type: 'null'
+                    - $ref: '#/components/schemas/Address'
+
+    UserDonations:
+      type: object
+      required: [total, data, hidden]
+      properties:
+        total: { type: integer, minimum: 0 }
+        data: { type: array, items: { $ref: '#/components/schemas/FeedItem' } }
+        hidden: { type: boolean, description: 'true = o doador escolheu não mostrar (lista sempre vazia)' }
+
+    PublicItem:
+      type: object
+      additionalProperties: false
+      required: [id, title, description, category, city, state, status, created_at, photos]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: [string, 'null'] }
+        category: { $ref: '#/components/schemas/Category' }
+        city: { type: string }
+        state: { type: string }
+        status: { type: string, enum: [DISPONIVEL, EM_PROGRESSO] }
+        created_at: { type: string, format: date-time }
+        photos: { type: array, minItems: 3, maxItems: 3, items: { type: string, format: uri } }
+
+    PublicItemList:
+      type: object
+      additionalProperties: false
+      required: [total, data]
+      properties:
+        total: { type: integer, minimum: 0 }
+        data: { type: array, items: { $ref: '#/components/schemas/PublicItem' } }
+
+    PublicUser:
+      type: object
+      additionalProperties: false
+      required: [id, role, city, state, bio, accepted_categories, donations_count]
+      properties:
+        id: { type: string, format: uuid }
+        role: { type: string, enum: [DONOR, NGO] }
+        city: { type: string }
+        state: { $ref: '#/components/schemas/UF' }
+        bio: { type: [string, 'null'] }
+        accepted_categories: { type: array, items: { $ref: '#/components/schemas/Category' }, description: 'Sempre [] para doador' }
+        donations_count: { type: [integer, 'null'], minimum: 0 }

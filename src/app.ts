@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance, type RouteOptions } from 'fastify';
+import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import jwt from '@fastify/jwt';
@@ -14,11 +15,12 @@ import './core/dto'; // mensagens de validação do Zod em PT-BR
 import { authPlugin } from './core/auth';
 import { createDb, type Db } from './core/db';
 import { createLogMailer, createResendMailer, type Mailer } from './core/email';
-import { env, isProd } from './core/env';
+import { allowedOrigins, env } from './core/env';
 import { AppError } from './core/errors';
 import { errorPlugin } from './core/errors/handler';
 import { bcryptHasher } from './core/passwords';
 import { createMemoryBus, type RealtimeBus } from './core/realtime';
+import { SESSION_COOKIE } from './core/session-cookie';
 import { createSupabaseStorage, type Storage } from './core/storage';
 import { createAdminController } from './modules/admin/admin.controller';
 import { adminRepository } from './modules/admin/admin.repository';
@@ -54,6 +56,10 @@ import { itemsRepository } from './modules/items/items.repository';
 import { itemsRoutes } from './modules/items/items.routes';
 import { createItemsService } from './modules/items/items.service';
 import { healthRoutes } from './modules/health/health.routes';
+import { createUsersController } from './modules/users/users.controller';
+import { usersRepository } from './modules/users/users.repository';
+import { usersRoutes } from './modules/users/users.routes';
+import { createUsersService } from './modules/users/users.service';
 
 export interface BuildAppOptions {
   /** Injetado nos testes; por padrão cria o pool a partir de DATABASE_URL. */
@@ -80,7 +86,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
         ? false
         : {
             level: env.LOG_LEVEL,
-            redact: ['req.headers.authorization', 'req.body.password', 'req.body.new_password', 'req.body.token'],
+            redact: ['req.headers.cookie', 'req.body.password', 'req.body.new_password', 'req.body.token'],
           },
     trustProxy: env.TRUST_PROXY,
     bodyLimit: env.BODY_LIMIT_MB * 1024 * 1024,
@@ -100,9 +106,15 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   });
   await app.register(helmet, { contentSecurityPolicy: false }); // API JSON; a CSP fica no frontend
   await app.register(cors, {
-    origin: isProd || env.NODE_ENV === 'test' ? env.CORS_ORIGIN : [...env.CORS_ORIGIN, 'http://localhost:5173'],
-    credentials: false,
+    origin: allowedOrigins,
+    // Sessão em cookie httpOnly (ADR-13): o navegador só envia o cookie com credentials.
+    credentials: true,
+    allowedHeaders: ['content-type', 'x-requested-with'],
+    // O front mostra o x-request-id nas telas de erro; sem expor, ele não consegue ler.
+    exposedHeaders: ['x-request-id'],
   });
+  // Antes do rate limit: a chave por usuário (userRateLimitKey) lê o cookie de sessão.
+  await app.register(cookie);
   await app.register(rateLimit, {
     global: true,
     max: env.RATE_LIMIT_MAX,
@@ -111,7 +123,13 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     keyGenerator: (req) => req.ip || 'unknown',
     errorResponseBuilder: () => Object.assign(new AppError('TOO_MANY_REQUESTS'), { statusCode: 429 }),
   });
-  await app.register(jwt, { secret: env.JWT_SECRET, sign: { expiresIn: env.JWT_EXPIRES_IN } });
+  await app.register(jwt, {
+    secret: env.JWT_SECRET,
+    sign: { expiresIn: env.JWT_EXPIRES_IN },
+    cookie: { cookieName: SESSION_COOKIE, signed: false },
+    // Só cookie: sem isso o @fastify/jwt dá prioridade ao header Authorization.
+    verify: { onlyCookie: true },
+  });
   await app.register(errorPlugin);
   await app.register(authPlugin, {
     findAuthContext: (userId) => authRepository.findAuthContext(db.sql, userId),
@@ -135,12 +153,25 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     await app.register(swagger, {
       openapi: {
         info: { title: 'Conecta Doações API', version: pkg.version },
-        components: { securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' } } },
-        security: [{ bearerAuth: [] }],
+        components: { securitySchemes: { cookieAuth: { type: 'apiKey', in: 'cookie', name: SESSION_COOKIE } } },
+        security: [{ cookieAuth: [] }],
       },
       transform: jsonSchemaTransform,
     });
-    await app.register(swaggerUi, { routePrefix: '/docs' });
+    await app.register(swaggerUi, {
+      routePrefix: '/docs',
+      // "Try it out": o login pelo Swagger grava o cookie, e todo envio leva o header anti-CSRF.
+      theme: {
+        js: [
+          {
+            filename: 'csrf-header.js',
+            content:
+              'const f=window.fetch;window.fetch=(i,o={})=>{const h=new Headers(o.headers);' +
+              "h.set('x-requested-with','XMLHttpRequest');return f(i,{...o,headers:h,credentials:'include'})};",
+          },
+        ],
+      },
+    });
   }
 
   // ── Rotas ──
@@ -199,6 +230,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       hasher: bcryptHasher,
     }),
   };
+  const users = createUsersService({ db, usersRepo: usersRepository, items: services.items });
   const maxFileBytes = env.UPLOAD_MAX_FILE_MB * 1024 * 1024;
   const controllers = {
     auth: createAuthController(services.auth, { maxFileBytes, passwordReset: services.passwordReset }),
@@ -208,6 +240,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     chats: createChatsController(services.chats),
     reports: createReportsController(services.reports),
     profile: createProfileController(services.profile, { maxFileBytes }),
+    users: createUsersController(users),
   };
 
   await app.register(
@@ -219,10 +252,12 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       chatsRoutes(api, controllers.chats);
       reportsRoutes(api, controllers.reports);
       profileRoutes(api, controllers.profile);
+      usersRoutes(api, controllers.users);
       chatsWebsocket(api, {
         service: services.chats,
         bus,
         findAuthContext: (userId) => authRepository.findAuthContext(db.sql, userId),
+        allowedOrigins,
       });
     },
     { prefix: '/api/v1' },

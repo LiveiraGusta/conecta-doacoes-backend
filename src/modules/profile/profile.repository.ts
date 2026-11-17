@@ -1,4 +1,17 @@
 import type { Queryable } from '../../core/db';
+import type { Category, UserPreferences } from '../../types';
+
+/** Campos da ONG gravados pelo PATCH /profile (undefined = não mexe). */
+export interface NgoProfilePatch {
+  phone?: string | null;
+  instagram?: string | null;
+  accepted_categories?: Category[];
+  cep?: string | null;
+  street?: string | null;
+  number?: string | null;
+  complement?: string | null;
+  neighborhood?: string | null;
+}
 
 export const profileRepository = {
   async updateUser(q: Queryable, userId: string, f: { name?: string; city?: string; state?: string }): Promise<void> {
@@ -13,6 +26,50 @@ export const profileRepository = {
 
   async updateWebsite(q: Queryable, userId: string, website: string | null): Promise<void> {
     await q`UPDATE ngo_profiles SET website = ${website} WHERE user_id = ${userId}`;
+  },
+
+  /** Troca a URL da foto de perfil e devolve a anterior (para apagar do Storage depois do commit). */
+  async setAvatarUrl(q: Queryable, userId: string, url: string | null): Promise<string | null> {
+    const [row] = await q<{ old: string | null }[]>`
+      UPDATE users u SET avatar_url = ${url}, updated_at = NOW()
+      FROM (SELECT avatar_url AS old FROM users WHERE id = ${userId} FOR UPDATE) prev
+      WHERE u.id = ${userId}
+      RETURNING prev.old`;
+    return row?.old ?? null;
+  },
+
+  /** Troca a URL do banner da ONG e devolve a anterior. */
+  async setBannerUrl(q: Queryable, userId: string, url: string | null): Promise<string | null> {
+    const [row] = await q<{ old: string | null }[]>`
+      UPDATE ngo_profiles np SET banner_url = ${url}
+      FROM (SELECT banner_url AS old FROM ngo_profiles WHERE user_id = ${userId} FOR UPDATE) prev
+      WHERE np.user_id = ${userId}
+      RETURNING prev.old`;
+    return row?.old ?? null;
+  },
+
+  async updateBio(q: Queryable, userId: string, bio: string | null): Promise<void> {
+    await q`UPDATE users SET bio = ${bio}, updated_at = NOW() WHERE id = ${userId}`;
+  },
+
+  async updateNgoProfile(q: Queryable, userId: string, patch: NgoProfilePatch): Promise<void> {
+    const fields = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
+    const columns = Object.keys(fields);
+    if (columns.length === 0) return;
+    await q`UPDATE ngo_profiles SET ${q(fields, columns)} WHERE user_id = ${userId}`;
+  },
+
+  async upsertPreferences(q: Queryable, userId: string, p: UserPreferences): Promise<UserPreferences> {
+    const [row] = await q<UserPreferences[]>`
+      INSERT INTO user_preferences (user_id, theme_color, theme_mode, show_donations)
+      VALUES (${userId}, ${p.theme_color}, ${p.theme_mode}, ${p.show_donations})
+      ON CONFLICT (user_id) DO UPDATE SET
+        theme_color = EXCLUDED.theme_color,
+        theme_mode = EXCLUDED.theme_mode,
+        show_donations = EXCLUDED.show_donations,
+        updated_at = NOW()
+      RETURNING theme_color, theme_mode, show_donations`;
+    return row!;
   },
 
   /** Grava o novo hash e marca a troca: tokens emitidos antes passam a ser recusados. */
@@ -72,6 +129,8 @@ export const profileRepository = {
         name = 'Usuário removido',
         email = 'removido+' || id || '@conectadoacoes.invalid',
         password_hash = '!',
+        bio = NULL,
+        avatar_url = NULL,
         deleted_at = NOW(),
         updated_at = NOW()
       WHERE id = ${userId}`;

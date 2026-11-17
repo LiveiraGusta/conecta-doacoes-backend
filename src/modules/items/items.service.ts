@@ -17,6 +17,7 @@ export interface ItemsDeps {
 export interface PublishInput {
   title: string;
   description?: string;
+  notes?: string;
   category: Category;
   city?: string;
   state?: string;
@@ -25,6 +26,9 @@ export interface PublishInput {
 export type ViewedItem = ItemView & { is_selected: boolean };
 
 const REQUIRED_PHOTOS = 3;
+
+/** Visitante não tem id: a coluna has_user_interest compara com um UUID que nunca existe. */
+const NO_VIEWER = '00000000-0000-0000-0000-000000000000';
 
 export const createItemsService = ({ db, itemsRepo, eventsRepo, storage }: ItemsDeps) => {
   /** Contexto de quem está vendo: ONG não ativa não vê "já curti" (o frontend esconde o botão). */
@@ -69,6 +73,7 @@ export const createItemsService = ({ db, itemsRepo, eventsRepo, storage }: Items
               donor_id: donor.id,
               title: input.title,
               description: input.description ?? null,
+              notes: input.notes ?? null,
               category: input.category,
               city: input.city ?? donor.city,
               state: input.state ?? donor.state,
@@ -110,6 +115,28 @@ export const createItemsService = ({ db, itemsRepo, eventsRepo, storage }: Items
       const view = await itemsRepo.findView(db.sql, itemId, viewer.id);
       if (!view) throw new AppError('ITEM_NOT_FOUND');
       return withViewer(viewer)(view);
+    },
+
+    /** Doações concluídas pelo doador (página pessoal). */
+    async donatedBy(viewer: AuthUser, donorId: string, page: { limit: number; offset: number }): Promise<Page<ViewedItem>> {
+      return mapPage(viewer, await itemsRepo.findDonated(db.sql, { donorId, viewerId: viewer.id, ...page }));
+    },
+
+    /** Itens recebidos pela ONG (página pessoal). */
+    async receivedBy(viewer: AuthUser, ngoId: string, page: { limit: number; offset: number }): Promise<Page<ViewedItem>> {
+      return mapPage(viewer, await itemsRepo.findDonated(db.sql, { ngoId, viewerId: viewer.id, ...page }));
+    },
+
+    /** Visitante: feed de todas as cidades. */
+    publicFeed(f: { category?: Category; search?: string; limit: number; offset: number }): Promise<Page<ItemView>> {
+      return itemsRepo.findFeed(db.sql, { ...f, viewerId: NO_VIEWER });
+    },
+
+    /** Visitante: só itens que estão no feed (DISPONIVEL ou EM_PROGRESSO); o resto é 404. */
+    async publicDetail(itemId: string): Promise<ItemView> {
+      const view = await itemsRepo.findView(db.sql, itemId, NO_VIEWER);
+      if (!view || (view.status !== 'DISPONIVEL' && view.status !== 'EM_PROGRESSO')) throw new AppError('ITEM_NOT_FOUND');
+      return view;
     },
   };
 };

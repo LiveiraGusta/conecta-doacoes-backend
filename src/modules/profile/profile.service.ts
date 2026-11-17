@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../../core/db';
 import { AppError } from '../../core/errors';
-import { detectFileKind, MIME } from '../../core/images';
+import { detectFileKind, MIME, toProfileWebp, type ProfileImageKind } from '../../core/images';
 import type { PasswordHasher } from '../../core/passwords';
 import type { Storage } from '../../core/storage';
-import type { AuthUser, UserWithProfile } from '../../types';
+import type { AuthUser, Category, UserPreferences, UserWithProfile } from '../../types';
+import { DEFAULT_PREFERENCES } from '../auth/auth.dto';
 import type { AuthRepository } from '../auth/auth.repository';
-import type { ProfileRepository } from './profile.repository';
+import { NGO_ONLY_FIELDS, type AddressBody } from './profile.dto';
+import type { NgoProfilePatch, ProfileRepository } from './profile.repository';
 
 export interface ProfileDeps {
   db: Pick<Db, 'sql' | 'tx'>;
@@ -20,8 +22,20 @@ export interface ProfilePatch {
   name?: string;
   city?: string;
   state?: string;
+  bio?: string | null;
   website?: string | null;
+  phone?: string | null;
+  instagram?: string | null;
+  accepted_categories?: Category[];
+  address?: AddressBody;
 }
+
+/** Endereço null apaga as 5 colunas; objeto grava todas (complemento ausente vira null). */
+const addressColumns = (address: AddressBody | undefined): NgoProfilePatch => {
+  if (address === undefined) return {};
+  if (address === null) return { cep: null, street: null, number: null, complement: null, neighborhood: null };
+  return { ...address, complement: address.complement ?? null };
+};
 
 export const createProfileService = ({ db, profileRepo, authRepo, storage, hasher }: ProfileDeps) => {
   async function loadSelf(userId: string): Promise<UserWithProfile> {
@@ -34,21 +48,97 @@ export const createProfileService = ({ db, profileRepo, authRepo, storage, hashe
     if (!(await hasher.compare(password, user.password_hash))) throw new AppError('INVALID_CURRENT_PASSWORD');
   }
 
+  /** Remove do bucket público um arquivo pela URL; falha só vai para o vazio (o banco já está certo). */
+  const removePublic = async (url: string | null | undefined) => {
+    const path = url ? storage.pathFromPublicUrl(url) : null;
+    if (path) await storage.remove('items', [path]).catch(() => {});
+  };
+
+  /**
+   * Sobe a imagem nova, grava a URL e só então apaga a antiga. Se gravar falhar, a nova é apagada.
+   * Avatar: doador e ONG. Banner: só ONG (a rota já barra os outros perfis).
+   */
+  async function replaceProfileImage(user: AuthUser, kind: ProfileImageKind, files: Buffer[]): Promise<UserWithProfile> {
+    if (files.length !== 1) throw new AppError('INVALID_PHOTO');
+    const webp = await toProfileWebp(files[0]!, kind);
+    const path = `profiles/${user.id}/${kind}-${randomUUID()}.webp`;
+    await storage.upload('items', path, webp, 'image/webp');
+    const url = storage.publicUrl(path);
+
+    let old: string | null;
+    try {
+      old =
+        kind === 'avatar'
+          ? await profileRepo.setAvatarUrl(db.sql, user.id, url)
+          : await profileRepo.setBannerUrl(db.sql, user.id, url);
+    } catch (err) {
+      await storage.remove('items', [path]).catch(() => {});
+      throw err;
+    }
+    await removePublic(old);
+    return loadSelf(user.id);
+  }
+
+  async function clearProfileImage(user: AuthUser, kind: ProfileImageKind): Promise<UserWithProfile> {
+    const old =
+      kind === 'avatar'
+        ? await profileRepo.setAvatarUrl(db.sql, user.id, null)
+        : await profileRepo.setBannerUrl(db.sql, user.id, null);
+    await removePublic(old);
+    return loadSelf(user.id);
+  }
+
   return {
-    /** Nome, cidade/UF e (ONG) site. Mudar a cidade muda o feed na hora; os itens já publicados não mudam. */
+    setAvatar: (user: AuthUser, files: Buffer[]) => replaceProfileImage(user, 'avatar', files),
+    removeAvatar: (user: AuthUser) => clearProfileImage(user, 'avatar'),
+    setBanner: (user: AuthUser, files: Buffer[]) => replaceProfileImage(user, 'banner', files),
+    removeBanner: (user: AuthUser) => clearProfileImage(user, 'banner'),
+
+    /**
+     * Nome, cidade/UF e descrição; a ONG também edita site, contato, categorias aceitas e endereço.
+     * Mudar a cidade muda o feed na hora; os itens já publicados não mudam.
+     */
     async update(user: AuthUser, patch: ProfilePatch): Promise<UserWithProfile> {
-      if (patch.website !== undefined && user.role !== 'NGO') {
-        throw new AppError('VALIDATION_ERROR', undefined, [{ path: 'website', message: 'Só ONGs têm site no perfil' }]);
+      if (user.role !== 'NGO') {
+        const details = NGO_ONLY_FIELDS.filter((f) => patch[f] !== undefined).map((path) => ({
+          path,
+          message: 'Campo disponível só para ONGs',
+        }));
+        if (details.length) throw new AppError('VALIDATION_ERROR', undefined, details);
       }
       await db.tx(async (tx) => {
-        const { website, ...fields } = patch;
-        if (Object.values(fields).some((v) => v !== undefined)) await profileRepo.updateUser(tx, user.id, fields);
+        const { name, city, state, bio, website, phone, instagram, accepted_categories, address } = patch;
+        if ([name, city, state].some((v) => v !== undefined)) await profileRepo.updateUser(tx, user.id, { name, city, state });
+        if (bio !== undefined) await profileRepo.updateBio(tx, user.id, bio);
         if (website !== undefined) await profileRepo.updateWebsite(tx, user.id, website);
+        if (user.role === 'NGO') {
+          await profileRepo.updateNgoProfile(tx, user.id, { phone, instagram, accepted_categories, ...addressColumns(address) });
+        }
       });
       return loadSelf(user.id);
     },
 
-    /** Troca a senha e invalida os tokens emitidos antes (o frontend faz login de novo). */
+    async getPreferences(user: AuthUser): Promise<UserPreferences> {
+      return (await loadSelf(user.id)).preferences ?? DEFAULT_PREFERENCES;
+    },
+
+    /** Mescla o que veio com o que está gravado (ou os padrões). `show_donations` é só do doador. */
+    async updatePreferences(user: AuthUser, patch: Partial<UserPreferences>): Promise<UserPreferences> {
+      if (patch.show_donations !== undefined && user.role !== 'DONOR') {
+        throw new AppError('VALIDATION_ERROR', undefined, [
+          { path: 'show_donations', message: 'Só doadores escolhem mostrar as doações na página pessoal' },
+        ]);
+      }
+      const current = (await loadSelf(user.id)).preferences ?? DEFAULT_PREFERENCES;
+      const next: UserPreferences = {
+        theme_color: patch.theme_color ?? current.theme_color,
+        theme_mode: patch.theme_mode ?? current.theme_mode,
+        show_donations: patch.show_donations ?? current.show_donations,
+      };
+      return profileRepo.upsertPreferences(db.sql, user.id, next);
+    },
+
+    /** Troca a senha e invalida os tokens emitidos antes (o controller reemite o cookie desta sessão). */
     async changePassword(user: AuthUser, current: string, next: string): Promise<void> {
       const self = await loadSelf(user.id);
       await checkPassword(self, current);
@@ -102,7 +192,11 @@ export const createProfileService = ({ db, profileRepo, authRepo, storage, hashe
       });
 
       // Arquivos saem depois do commit; falha aqui não desfaz a exclusão.
-      const photoPaths = photoUrls.map((u) => storage.pathFromPublicUrl(u)).filter((p): p is string => Boolean(p));
+      // A foto de perfil e o banner saem junto: a conta anonimizada não guarda imagem da pessoa.
+      const profileImages = [self.avatar_url, self.ngo_profile?.banner_url].filter((u): u is string => Boolean(u));
+      const photoPaths = [...photoUrls, ...profileImages]
+        .map((u) => storage.pathFromPublicUrl(u))
+        .filter((p): p is string => Boolean(p));
       await storage.remove('items', photoPaths).catch(() => {});
       if (documentPath) await storage.remove('docs', [documentPath]).catch(() => {});
     },
