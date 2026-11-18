@@ -43,7 +43,9 @@ Todas são lidas e validadas uma única vez em [src/core/env.ts](src/core/env.ts
 | `SUPABASE_URL` | sim | `https://<ref>.supabase.co` | Storage |
 | `SUPABASE_SERVICE_ROLE_KEY` | sim | — | Storage; segredo, só no servidor |
 | `JWT_SECRET` | sim | `openssl rand -base64 48` | Mínimo de 32 caracteres |
-| `CORS_ORIGIN` | sim | `https://conectadoacoes.vercel.app` | Várias origens separadas por vírgula. Em dev, `localhost:5173` é liberado automaticamente |
+| `CORS_ORIGIN` | sim | `https://app.seudominio.com.br` | Várias origens separadas por vírgula. Em dev, `localhost:5173` é liberado automaticamente. Em produção: só `https://host`, sem barra final, e nunca `*.vercel.app` / `*.onrender.com` (ADR-13; a API recusa subir) |
+| `COOKIE_SECURE` | em produção | `false` / `true` | Cookie de sessão só por HTTPS. Obrigatório `true` em produção (a API recusa subir sem isso) |
+| `COOKIE_DOMAIN` | não | vazio / `.seudominio.com.br` | Domínio do cookie. Vazio = só o host da API, que já funciona com `app.<dom>` + `api.<dom>`. Se preenchido, toda origem do `CORS_ORIGIN` precisa estar dentro dele |
 | `JWT_EXPIRES_IN` | não | `7d` | Validade do token |
 | `PORT` / `HOST` | não | `3333` / `0.0.0.0` | |
 | `LOG_LEVEL` | não | `info` | |
@@ -53,7 +55,7 @@ Todas são lidas e validadas uma única vez em [src/core/env.ts](src/core/env.ts
 | `SWAGGER_ENABLED` | não | `false` | `/docs`; deixe desligado em produção |
 | `RESEND_API_KEY` | em produção | `re_...` | Envio do e-mail de recuperação de senha. Sem ela (só fora de produção), o e-mail com o link sai no log |
 | `EMAIL_FROM` | não | `Conecta Doações <nao-responda@seudominio.com.br>` | Remetente; precisa ser de um domínio verificado no Resend. O padrão `onboarding@resend.dev` só entrega para o e-mail dono da conta Resend |
-| `APP_URL` | não | `https://conectadoacoes.vercel.app` | Frontend; o link do e-mail é `APP_URL/redefinir-senha?token=…` (padrão `http://localhost:5173`) |
+| `APP_URL` | não | `https://app.seudominio.com.br` | Frontend; o link do e-mail é `APP_URL/redefinir-senha?token=…` (padrão `http://localhost:5173`). Em produção, com https e presente no `CORS_ORIGIN` |
 | `STORAGE_BUCKET_ITEMS` / `STORAGE_BUCKET_DOCS` | não | `items` / `ngo-docs` | |
 | `RATE_LIMIT_MAX` / `AUTH_RATE_LIMIT_MAX` | não | `120` / `10` | Por minuto: global por IP / `/auth/*` por IP |
 | `ITEMS_RATE_LIMIT_MAX` / `MESSAGES_RATE_LIMIT_MAX` | não | `10` / `30` | Por minuto e por usuário: `POST /items` / envio de mensagem |
@@ -118,9 +120,13 @@ O setup recria o schema do banco de teste (`DROP SCHEMA public`) antes de cada e
 
 O [render.yaml](render.yaml) descreve o serviço: build com `npm ci --include=dev && npm run build`, start com `npm run start:prod` (migra e sobe) e health check em `/health/ready`.
 
+**Pré-requisito: domínio próprio**, com o front em `app.<domínio>` e a API em `api.<domínio>`. O cookie de sessão (`SameSite=Lax`) só vai nas requisições do front se os dois estiverem no mesmo site; `*.vercel.app` e `*.onrender.com` estão na Public Suffix List e contam como sites diferentes ([ADR-13](docs/adr/ADR-13-sessao-cookie.md)). Em produção a API confere isso no boot e recusa subir com a config errada.
+
 1. No Supabase, use a connection string do **pooler** (porta 6543) em `DATABASE_URL` e rode `npm run storage:check` uma vez apontando para o projeto de produção.
-2. Crie o serviço pelo Blueprint e preencha os segredos marcados com `sync: false`.
-3. Depois do primeiro deploy, crie o Admin: no Shell do Render, `ADMIN_EMAIL=... ADMIN_PASSWORD=... npm run seed:prod`. Em produção, o seed recusa senha fraca.
+2. Crie o serviço pelo Blueprint e preencha os segredos marcados com `sync: false`: `CORS_ORIGIN` e `APP_URL` com `https://app.<domínio>`; `COOKIE_DOMAIN` pode ficar vazio. `COOKIE_SECURE=true` já vem do Blueprint.
+3. No Render, adicione o domínio personalizado `api.<domínio>` ao serviço e crie o registro DNS que ele indicar.
+4. Depois do primeiro deploy, crie o Admin: no Shell do Render, `ADMIN_EMAIL=... ADMIN_PASSWORD=... npm run seed:prod`. Em produção, o seed recusa senha fraca.
+5. Confira: `https://api.<domínio>/health/ready` responde `ok` e o login pelo front grava o cookie `cd_session` com `Secure`.
 
 Limites conhecidos desta versão:
 

@@ -3,7 +3,48 @@ import { z } from 'zod';
 
 const bool = z.enum(['true', 'false']).transform((v) => v === 'true');
 
-const Env = z.object({
+/**
+ * Domínios de plataforma que estão na Public Suffix List: cada subdomínio é um "site" separado.
+ * Front num deles e API em outro host = sites diferentes, e o cookie SameSite=Lax não vai nas
+ * requisições do front. Por isso produção exige domínio próprio (ADR-13).
+ */
+const PLATFORM_SUFFIXES = ['vercel.app', 'onrender.com', 'netlify.app', 'railway.app', 'fly.dev', 'herokuapp.com', 'pages.dev', 'github.io'];
+
+const onPlatformSuffix = (host: string) => PLATFORM_SUFFIXES.some((s) => host === s || host.endsWith(`.${s}`));
+
+/** Regras que só valem em produção: config errada aqui derruba o login sem erro aparente, então a API nem sobe. */
+function checkProduction(e: { COOKIE_SECURE: boolean; RESEND_API_KEY?: string; CORS_ORIGIN: string[]; APP_URL: string; COOKIE_DOMAIN?: string }, ctx: z.RefinementCtx) {
+  const issue = (path: string, message: string) => ctx.addIssue({ code: 'custom', path: [path], message });
+
+  if (!e.COOKIE_SECURE) issue('COOKIE_SECURE', 'Obrigatório true em produção (HTTPS)');
+  if (!e.RESEND_API_KEY) issue('RESEND_API_KEY', 'Obrigatória em produção (recuperação de senha)');
+  if (e.CORS_ORIGIN.length === 0) issue('CORS_ORIGIN', 'Informe a origem do frontend (ex.: https://app.seudominio.com.br)');
+
+  const cookieDomain = e.COOKIE_DOMAIN?.replace(/^\./, '');
+  for (const origin of e.CORS_ORIGIN) {
+    let url: URL;
+    try {
+      url = new URL(origin);
+    } catch {
+      issue('CORS_ORIGIN', `Origem inválida: ${origin}`);
+      continue;
+    }
+    if (url.protocol !== 'https:') issue('CORS_ORIGIN', `Use https em produção: ${origin}`);
+    if (url.origin !== origin) issue('CORS_ORIGIN', `Use só esquema + host, sem caminho nem barra final: ${url.origin}`);
+    if (onPlatformSuffix(url.hostname)) {
+      issue('CORS_ORIGIN', `${url.hostname} não serve: o cookie de sessão não funciona entre sites de plataforma. Use um domínio próprio (ADR-13)`);
+    }
+    if (cookieDomain && url.hostname !== cookieDomain && !url.hostname.endsWith(`.${cookieDomain}`)) {
+      issue('COOKIE_DOMAIN', `${url.hostname} não está dentro de ${e.COOKIE_DOMAIN}`);
+    }
+  }
+
+  const app = new URL(e.APP_URL);
+  if (app.protocol !== 'https:') issue('APP_URL', 'Use https em produção');
+  if (!e.CORS_ORIGIN.includes(app.origin)) issue('APP_URL', `${app.origin} precisa estar no CORS_ORIGIN (é o mesmo frontend)`);
+}
+
+export const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().default(3333),
   HOST: z.string().default('0.0.0.0'),
@@ -48,15 +89,10 @@ const Env = z.object({
   // Frontend: o link do e-mail aponta para APP_URL/redefinir-senha?token=…
   APP_URL: z.url().default('http://localhost:5173'),
 }).superRefine((e, ctx) => {
-  if (e.NODE_ENV === 'production' && !e.COOKIE_SECURE) {
-    ctx.addIssue({ code: 'custom', path: ['COOKIE_SECURE'], message: 'Obrigatório true em produção (HTTPS)' });
-  }
-  if (e.NODE_ENV === 'production' && !e.RESEND_API_KEY) {
-    ctx.addIssue({ code: 'custom', path: ['RESEND_API_KEY'], message: 'Obrigatória em produção (recuperação de senha)' });
-  }
+  if (e.NODE_ENV === 'production') checkProduction(e, ctx);
 });
 
-const parsed = Env.safeParse(process.env);
+const parsed = EnvSchema.safeParse(process.env);
 if (!parsed.success) {
   console.error('Variáveis de ambiente inválidas:', z.flattenError(parsed.error).fieldErrors);
   process.exit(1);
