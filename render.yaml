@@ -23,6 +23,9 @@ services:
         value: info
       - key: JWT_EXPIRES_IN
         value: 7d
+      # Cookie de sessão só por HTTPS. A API não sobe em produção sem isso (src/core/env.ts).
+      - key: COOKIE_SECURE
+        value: "true"
       - key: DATABASE_URL # pooler do Supabase, porta 6543
         sync: false
       - key: SUPABASE_URL
@@ -31,11 +34,16 @@ services:
         sync: false
       - key: JWT_SECRET # openssl rand -base64 48
         sync: false
-      - key: CORS_ORIGIN # ex.: https://conectadoacoes.vercel.app
+      # Front em domínio próprio, no mesmo site da API (ADR-13): ex.: https://app.seudominio.com.br
+      # *.vercel.app e *.onrender.com são recusados: o cookie de sessão não funciona entre eles.
+      - key: CORS_ORIGIN
+        sync: false
+      # Opcional: ex.: .seudominio.com.br. Vazio = cookie só no host da API (já funciona com app.<dom> + api.<dom>).
+      - key: COOKIE_DOMAIN
         sync: false
       - key: RESEND_API_KEY # recuperação de senha; obrigatória em produção
         sync: false
       - key: EMAIL_FROM # remetente de um domínio verificado no Resend
         sync: false
-      - key: APP_URL # frontend; link do e-mail de redefinição
+      - key: APP_URL # frontend (https://app.seudominio.com.br); link do e-mail de redefinição; precisa estar no CORS_ORIGIN
         sync: false
