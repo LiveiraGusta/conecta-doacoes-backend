@@ -278,5 +278,18 @@ describe('Módulo 1 — Autenticação', () => {
       const get = await ctx.app.inject({ method: 'GET', url: '/api/v1/auth/me', headers: { origin: 'http://localhost:5173' } });
       expect(String(get.headers['access-control-expose-headers'])).toContain('x-request-id');
     });
+
+    it.each(['PUT', 'PATCH', 'DELETE'])('CORS libera o método %s no preflight', async (method) => {
+      const res = await ctx.app.inject({
+        method: 'OPTIONS',
+        url: '/api/v1/profile/preferences',
+        headers: {
+          origin: 'http://localhost:5173',
+          'access-control-request-method': method,
+          'access-control-request-headers': 'content-type,x-requested-with',
+        },
+      });
+      expect(String(res.headers['access-control-allow-methods']).split(/,\s*/)).toContain(method);
+    });
   });
 });
