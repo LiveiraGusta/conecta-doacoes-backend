@@ -107,6 +107,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     origin: allowedOrigins,
     // Sessão em cookie httpOnly (ADR-13): o navegador só envia o cookie com credentials.
     credentials: true,
+    // O padrão do @fastify/cors (v10+) é só GET,HEAD,POST: sem isto o navegador barra PATCH/PUT/DELETE no preflight.
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
     allowedHeaders: ['content-type', 'x-requested-with'],
     // O front mostra o x-request-id nas telas de erro; sem expor, ele não consegue ler.
     exposedHeaders: ['x-request-id'],
