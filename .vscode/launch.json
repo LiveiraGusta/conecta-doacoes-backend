@@ -1,0 +1,92 @@
+{
+  // Depuração no VS Code (F5). Escolha a configuração no menu da aba "Executar e depurar".
+  // TypeScript roda direto pelo tsx, e os breakpoints funcionam nos arquivos .ts.
+  // Os testes passam pelo scripts/vitest.mjs, que corrige a letra do drive no Windows.
+  // O depurador acompanha o processo filho do Vitest sozinho.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "API (dev)",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeArgs": ["--import", "tsx"],
+      // Sem isto o depurador acha o dist/ pelo source map e roda o build em vez do .ts.
+      "outFiles": ["${workspaceFolder}/**/*.(m|c|)js", "!**/node_modules/**", "!${workspaceFolder}/dist/**"],
+      "program": "${workspaceFolder}/src/server.ts",
+      // Lê o .env. Com SWAGGER_ENABLED=true, a API fica em http://localhost:3333/docs.
+      "env": { "LOG_LEVEL": "debug" },
+      "preLaunchTask": "docker: bancos",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      "name": "Testes: arquivo aberto",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "program": "${workspaceFolder}/scripts/vitest.mjs",
+      // Sem timeout: um teste parado num breakpoint não falha por demora.
+      "args": ["run", "${relativeFile}", "--testTimeout=0", "--hookTimeout=0"],
+      "preLaunchTask": "docker: bancos",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      "name": "Testes: teste com o nome selecionado",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "program": "${workspaceFolder}/scripts/vitest.mjs",
+      // Selecione no editor parte do nome do it(...) antes de apertar F5.
+      "args": ["run", "${relativeFile}", "-t", "${selectedText}", "--testTimeout=0", "--hookTimeout=0"],
+      "preLaunchTask": "docker: bancos",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      "name": "Testes: unitários",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "program": "${workspaceFolder}/scripts/vitest.mjs",
+      "args": ["run", "--project", "unit", "--testTimeout=0"],
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      "name": "Testes: integração e e2e",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "program": "${workspaceFolder}/scripts/vitest.mjs",
+      "args": ["run", "--project", "int", "--testTimeout=0", "--hookTimeout=0"],
+      "preLaunchTask": "docker: bancos",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      "name": "Script aberto (tsx)",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeArgs": ["--import", "tsx"],
+      // Sem isto o depurador acha o dist/ pelo source map e roda o build em vez do .ts.
+      "outFiles": ["${workspaceFolder}/**/*.(m|c|)js", "!**/node_modules/**", "!${workspaceFolder}/dist/**"],
+      // Para depurar migrate.ts, seed.ts, storage-check.ts ou qualquer .ts aberto.
+      "program": "${file}",
+      "preLaunchTask": "docker: bancos",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      "name": "Anexar a um processo (porta 9229)",
+      "type": "node",
+      "request": "attach",
+      // Para uma API já rodando com: node --inspect --import tsx src/server.ts
+      "port": 9229,
+      "restart": true,
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    }
+  ]
+}

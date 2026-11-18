@@ -1,0 +1,22 @@
+{
+  // Tarefas usadas pelo launch.json (e disponíveis em "Terminal > Executar tarefa").
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // Sobe o Postgres de dev (5434) e o de teste (5433). Se já estiverem de pé, não faz nada.
+      "label": "docker: bancos",
+      "type": "shell",
+      "command": "docker compose up -d db db-test",
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "silent", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "docker: parar bancos",
+      "type": "shell",
+      "command": "docker compose stop",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    }
+  ]
+}
