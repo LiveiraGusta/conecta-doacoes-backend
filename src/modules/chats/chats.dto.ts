@@ -181,7 +181,8 @@ export type WsServerMessage =
       item_id: string;
       previous_status: string;
       status: string;
-      changed_by: 'DONOR' | 'NGO';
+      /** ADMIN: negociação desfeita porque a moderação removeu o anúncio. */
+      changed_by: 'DONOR' | 'NGO' | 'ADMIN';
       reason: string | null;
       completed_at: string | null;
     };
@@ -194,7 +195,7 @@ export const toWsEvent = (e: RoomEvent): WsServerMessage =>
         item_id: e.itemId,
         previous_status: e.from,
         status: e.to,
-        changed_by: party(e.actorRole),
+        changed_by: e.actorRole === 'ADMIN' ? 'ADMIN' : party(e.actorRole),
         reason: e.reason,
         completed_at: toIsoOrNull(e.completedAt),
       };

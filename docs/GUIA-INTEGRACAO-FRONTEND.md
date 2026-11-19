@@ -352,6 +352,28 @@ Peça confirmação nos dois botões ("Tem certeza?"): as duas ações são defi
    - Se a denunciada for uma ONG, `reported.ngo_profile_id` permite ir direto à moderação dela (F5).
 3. Resolver: `PATCH /admin/reports/{id}` `{ "status": "RESOLVIDA" }` → `200 Report`. Repetir a chamada não dá erro.
 
+### F11b. Denúncia de anúncio (conteúdo impróprio)
+
+**Usuário** (qualquer doador ou ONG logado, de qualquer status, menos o dono do item): "Denunciar anúncio" no detalhe do item → `POST /items/{itemId}/report` `{ "category": "NUDEZ" | "ODIO" | "VIOLENCIA" | "GOLPE" | "PROIBIDO" | "SPAM" | "OUTRO", "reason"?: "até 1000" }` → `201 Report` com `kind: "ITEM"`. Em `OUTRO`, `reason` é obrigatório (mínimo de 10 caracteres).
+- Visitante: mostrar o botão e, ao clicar, o convite para entrar (como no "Tenho interesse").
+- `409 ITEM_ALREADY_REPORTED`: já existe uma denúncia de anúncio aberta deste usuário sobre este item. Tratar como "já recebemos sua denúncia".
+- `404 ITEM_NOT_FOUND`: o anúncio saiu do ar enquanto a tela estava aberta.
+- A resposta não diz se o anúncio foi ocultado (não revela quantas denúncias existem).
+
+**Moderação do item** (`moderation_status` em `Item`, `ItemDetail` e `FeedItem`):
+- `VISIVEL`: normal.
+- `OCULTO`: 3 pessoas diferentes com denúncia aberta tiraram o anúncio do ar até o Admin decidir. Sai do feed, das rotas públicas, da página pessoal e da lista de interesses das ONGs (menos a ONG escolhida). O detalhe só abre para o doador, a ONG escolhida e o Admin. A negociação em andamento continua (chat e confirmação funcionam); curtir dá 404 e escolher ONG dá `409 ITEM_UNDER_REVIEW`.
+- `REMOVIDO`: o Admin tirou do ar. Se havia negociação, ela foi cancelada (o WebSocket manda `item.status_changed` com `changed_by: "ADMIN"`). Escolher ONG dá `409 ITEM_REMOVED`.
+- Em "Minhas doações", o doador vê o selo: *"Em análise"* (`OCULTO`) ou *"Removido pela moderação: {moderation_reason}"* (`REMOVIDO`). `moderation_reason` só vem para o doador.
+
+**Admin:**
+1. Fila: `GET /admin/reports?kind=ITEM` (ou `CHAT`; sem o filtro, as duas). Cada linha traz `kind`, `category`, `resolution` e `item.moderation_status`.
+2. Detalhe: `GET /admin/reports/{id}` traz também `item.photos`, `item.description`, `item.moderation_status` e `item_reports` (todas as denúncias de anúncio do item, com categoria e quem denunciou). Nas de anúncio, `messages` vem vazio.
+3. Decidir sobre o anúncio (vale para todas as denúncias de anúncio abertas dele):
+   - Remover: `POST /admin/items/{itemId}/remove` `{ "reason": "10 a 500, mostrado ao doador" }` → `200 ModerationResult`. Denúncias abertas ficam `resolution: ITEM_REMOVIDO`.
+   - Manter: `POST /admin/items/{itemId}/restore` → `200 ModerationResult`. O anúncio volta a `VISIVEL` e as denúncias ficam `resolution: IMPROCEDENTE`. Também desfaz uma remoção por engano.
+   - `PATCH /admin/reports/{id}` numa denúncia de anúncio aberta dá `409 CONFLICT`: use as rotas acima.
+
 ### F12. Perfil
 
 - **Editar:** `PATCH /profile` com qualquer combinação dos campos abaixo → `200 { user }`. **O e-mail não é editável.** Mudar a cidade muda o feed na hora: recarregue-o.
@@ -516,6 +538,9 @@ Ao reconectar, busque o que se perdeu em cada sala aberta com `GET /chats/{itemI
 | `NGO_ALREADY_ACTIVE` | 409 | Reenviar documento | Recarregar `/auth/me` |
 | `HAS_ACTIVE_NEGOTIATIONS` | 409 | Excluir conta | Levar para as conversas em andamento |
 | `ALREADY_REPORTED` | 409 | Denunciar | "Você já denunciou esta negociação" |
+| `ITEM_ALREADY_REPORTED` | 409 | Denunciar anúncio | "Você já denunciou este anúncio" (tratar como sucesso) |
+| `ITEM_UNDER_REVIEW` | 409 | Escolher ONG | Mostrar `message`; o anúncio está em análise |
+| `ITEM_REMOVED` | 409 | Escolher ONG | Mostrar `message` e recarregar o item |
 | `CHAT_CLOSED` | 409 | Sala, enviar, marcar como lida, denunciar | Recarregar a sala / modo só leitura |
 | `CONFLICT` | 409 | Genérico | Recarregar |
 | `PAYLOAD_TOO_LARGE` | 413 | Uploads | "Arquivo maior que 5 MB" |

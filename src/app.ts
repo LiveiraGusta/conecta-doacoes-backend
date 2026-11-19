@@ -221,6 +221,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       itemsRepo: itemsRepository,
       reportsRepo: reportsRepository,
       eventsRepo: itemEventsRepository,
+      bus,
     }),
     profile: createProfileService({
       db,

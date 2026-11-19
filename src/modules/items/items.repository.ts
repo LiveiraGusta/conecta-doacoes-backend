@@ -1,5 +1,5 @@
 import type { Queryable } from '../../core/db';
-import type { Category, Item, ItemPhoto, ItemStatus, ItemView, Page } from '../../types';
+import type { Category, Item, ItemPhoto, ItemStatus, ItemView, ModerationStatus, Page } from '../../types';
 
 export type { ItemView, Page };
 
@@ -55,6 +55,7 @@ export const itemsRepository = {
     const [row] = await q<Item[]>`
       UPDATE items i SET status = 'EM_PROGRESSO', selected_ngo_id = ${ngoId}
       WHERE i.id = ${itemId} AND i.donor_id = ${donorId} AND i.status = 'DISPONIVEL'
+        AND i.moderation_status = 'VISIVEL'
         AND EXISTS (SELECT 1 FROM item_interests WHERE item_id = ${itemId} AND ngo_id = ${ngoId})
         AND EXISTS (SELECT 1 FROM ngo_profiles WHERE user_id = ${ngoId} AND status = 'ATIVO')
       RETURNING i.*`;
@@ -108,12 +109,12 @@ export const itemsRepository = {
   },
 
   /**
-   * Feed: DISPONIVEL e EM_PROGRESSO, mais novos primeiro. Com cidade/UF, só a região (usuário logado);
+   * Feed: DISPONIVEL e EM_PROGRESSO, só VISIVEL na moderação, mais novos primeiro. Com cidade/UF, só a região (usuário logado);
    * sem, todas as cidades (visitante).
    */
   async findFeed(q: Queryable, f: FeedFilter): Promise<Page<ItemView>> {
     const where = q`
-      i.status IN ('DISPONIVEL', 'EM_PROGRESSO')
+      i.status IN ('DISPONIVEL', 'EM_PROGRESSO') AND i.moderation_status = 'VISIVEL'
       ${f.city && f.state ? q`AND i.state = ${f.state} AND i.city = ${f.city}` : q``}
       ${f.category ? q`AND i.category = ${f.category}` : q``}
       ${f.search ? q`AND (i.title ILIKE ${likePattern(f.search)} OR i.description ILIKE ${likePattern(f.search)})` : q``}`;
@@ -150,7 +151,7 @@ export const itemsRepository = {
     f: { donorId?: string; ngoId?: string; viewerId: string; limit: number; offset: number },
   ): Promise<Page<ItemView>> {
     const where = q`
-      i.status = 'DOADO'
+      i.status = 'DOADO' AND i.moderation_status = 'VISIVEL'
       ${f.donorId ? q`AND i.donor_id = ${f.donorId}` : q``}
       ${f.ngoId ? q`AND i.selected_ngo_id = ${f.ngoId}` : q``}`;
     const [count] = await q<{ total: number }[]>`SELECT count(*)::int AS total FROM items i WHERE ${where}`;
@@ -163,13 +164,17 @@ export const itemsRepository = {
     return { total: count?.total ?? 0, rows };
   },
 
-  /** Itens que a ONG curtiu (inclui os que ela negocia ou recebeu), mais recentes primeiro. */
+  /**
+   * Itens que a ONG curtiu (inclui os que ela negocia ou recebeu), mais recentes primeiro.
+   * Anúncio oculto ou removido pela moderação some, salvo para a ONG escolhida.
+   */
   async findInterestedBy(
     q: Queryable,
     f: { ngoId: string; status?: ItemStatus; limit: number; offset: number },
   ): Promise<Page<ItemView>> {
     const where = q`
       EXISTS (SELECT 1 FROM item_interests mine WHERE mine.item_id = i.id AND mine.ngo_id = ${f.ngoId})
+      AND (i.moderation_status = 'VISIVEL' OR i.selected_ngo_id = ${f.ngoId})
       ${f.status ? q`AND i.status = ${f.status}` : q``}`;
     const [count] = await q<{ total: number }[]>`SELECT count(*)::int AS total FROM items i WHERE ${where}`;
     const rows = await q<ItemView[]>`
@@ -179,6 +184,47 @@ export const itemsRepository = {
       ORDER BY i.created_at DESC, i.id DESC
       LIMIT ${f.limit} OFFSET ${f.offset}`;
     return { total: count?.total ?? 0, rows };
+  },
+
+  // ── Moderação ──
+  /** Trava a linha do item até o fim da transação (serializa denúncias e ações do Admin sobre ele). */
+  async lockById(q: Queryable, id: string): Promise<Item | null> {
+    const [row] = await q<Item[]>`SELECT * FROM items WHERE id = ${id} FOR UPDATE`;
+    return row ?? null;
+  },
+
+  /** VISIVEL → OCULTO (ocultação automática por denúncias). null se não estava visível. */
+  async hideIfVisible(q: Queryable, id: string): Promise<Item | null> {
+    const [row] = await q<Item[]>`
+      UPDATE items SET moderation_status = 'OCULTO', moderated_at = NOW(), moderated_by = NULL
+      WHERE id = ${id} AND moderation_status = 'VISIVEL'
+      RETURNING *`;
+    return row ?? null;
+  },
+
+  /**
+   * Muda a moderação pelo Admin. Ao remover um item EM_PROGRESSO, a negociação é desfeita no mesmo
+   * UPDATE (volta a DISPONIVEL sem ONG). No SET, `status` é o valor antigo da linha.
+   */
+  async setModeration(
+    q: Queryable,
+    id: string,
+    m: { status: Exclude<ModerationStatus, 'OCULTO'>; reason: string | null; adminId: string },
+  ): Promise<Item | null> {
+    const undoNegotiation =
+      m.status === 'REMOVIDO'
+        ? q`,
+          status = CASE WHEN status = 'EM_PROGRESSO' THEN 'DISPONIVEL' ELSE status END,
+          selected_ngo_id = CASE WHEN status = 'EM_PROGRESSO' THEN NULL ELSE selected_ngo_id END`
+        : q``;
+    const [row] = await q<Item[]>`
+      UPDATE items SET
+        moderation_status = ${m.status}, moderation_reason = ${m.reason},
+        moderated_at = NOW(), moderated_by = ${m.adminId}
+        ${undoNegotiation}
+      WHERE id = ${id}
+      RETURNING *`;
+    return row ?? null;
   },
 };
 

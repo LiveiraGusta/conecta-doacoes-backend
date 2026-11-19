@@ -5,7 +5,7 @@ export type { InterestedNgo };
 
 export const interestsRepository = {
   /**
-   * Curtida atômica: só insere se o item existe, está DISPONIVEL e é da cidade/UF da ONG.
+   * Curtida atômica: só insere se o item existe, está DISPONIVEL e VISIVEL e é da cidade/UF da ONG.
    * Like duplicado estoura a constraint única (→ 409 ALREADY_INTERESTED no handler).
    */
   async insertIfAvailable(
@@ -16,7 +16,7 @@ export const interestsRepository = {
       INSERT INTO item_interests (item_id, ngo_id)
       SELECT i.id, ${f.ngoId}
       FROM items i
-      WHERE i.id = ${f.itemId} AND i.status = 'DISPONIVEL' AND i.city = ${f.city} AND i.state = ${f.state}
+      WHERE i.id = ${f.itemId} AND i.status = 'DISPONIVEL' AND i.moderation_status = 'VISIVEL' AND i.city = ${f.city} AND i.state = ${f.state}
       RETURNING *`;
     return row ?? null;
   },

@@ -23,6 +23,8 @@ const item = (over: Partial<Item> = {}): Item => ({
   selected_ngo_id: null,
   created_at: new Date(),
   completed_at: null,
+  moderation_status: 'VISIVEL',
+  moderation_reason: null,
   ...over,
 });
 

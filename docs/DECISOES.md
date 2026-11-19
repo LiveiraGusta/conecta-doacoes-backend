@@ -143,6 +143,21 @@ Mudanças pedidas no planejamento do frontend React. O plano e o registro comple
 | 0.2b-3 | O feed do visitante reaproveita `findFeed` sem cidade/UF e um id de visitante que nunca existe | Claude | Uma consulta só para os dois modos; `has_user_interest` sempre `false` para o visitante |
 | 0.2b-3 | Fim da fase 0: o backend tem tudo o que o plano do frontend pede | Claude | Próximo passo: fase 1a do frontend |
 
+## Denúncia de anúncio
+
+| Fase | Decisão | Quem tomou | Consequência |
+| --- | --- | --- | --- |
+| Denúncia de anúncio | Qualquer doador ou ONG logado denuncia o conteúdo de um anúncio (nudez, ódio, violência, golpe, item proibido, spam, outro); visitante não, e o dono do item também não | Usuário | `POST /items/:itemId/report`. Sem denúncia anônima, sem rate limit por IP. ONG em análise ou rejeitada também denuncia |
+| Denúncia de anúncio | Mesma tabela `reports`, com `kind` (`CHAT` / `ITEM`), `category` e `resolution`; `reason` passa a aceitar null (só no `ITEM`) | Claude | A fila do Admin continua única, com filtro `kind`. `reported_id` do `ITEM` é o doador. `Report.reason` virou `string \| null` no contrato |
+| Denúncia de anúncio | Uma denúncia aberta por usuário, item **e tipo** (dois índices únicos parciais, dois códigos: `ALREADY_REPORTED` e `ITEM_ALREADY_REPORTED`) | Claude | A mesma ONG pode denunciar a negociação e o anúncio do mesmo item |
+| Denúncia de anúncio | Com 3 pessoas diferentes com denúncia aberta, o anúncio sai do ar sozinho (`moderation_status: OCULTO`) até o Admin decidir | Usuário | Uma pessoa sozinha não derruba anúncio. A linha do item é travada na transação: denúncias simultâneas contam certo (teste de integração) |
+| Denúncia de anúncio | Moderação em coluna própria (`items.moderation_status`, `moderation_reason`, `moderated_at`, `moderated_by`), separada de `items.status` | Claude | A máquina de estados da doação não muda. Fora de `VISIVEL`: some do feed, das rotas públicas, da página pessoal e das listas da ONG (salvo a escolhida); detalhe só para doador, ONG escolhida e Admin; curtir dá 404 |
+| Denúncia de anúncio | Anúncio oculto mantém a negociação em andamento (chat e confirmação funcionam); só bloqueia escolher ONG (`409 ITEM_UNDER_REVIEW`) | Claude | A ocultação é preventiva: não pune a ONG que já está negociando |
+| Denúncia de anúncio | Admin decide pelo anúncio, não por denúncia: `POST /admin/items/:id/remove` (motivo para o doador) ou `/restore` (descarta como improcedente). `PATCH` numa denúncia de anúncio aberta dá 409 | Usuário | Todas as denúncias abertas do item são resolvidas juntas, com `resolution`. Sem bloqueio de conta nesta versão |
+| Denúncia de anúncio | Remover um item `EM_PROGRESSO` cancela a negociação (mesmos eventos do cancelamento, autor = Admin) e avisa pelo WebSocket com `changed_by: "ADMIN"` | Claude | O chat fecha para as duas partes. `changed_by` ganhou o valor `ADMIN` (aditivo) |
+| Denúncia de anúncio | O doador vê o selo na tela ("Em análise" / "Removido: motivo"), sem e-mail; `moderation_reason` só vai para o doador | Usuário | Aditivo em `Item`, `ItemDetail` e `FeedItem` |
+| Denúncia de anúncio | No detalhe de uma denúncia de anúncio, o Admin vê fotos, descrição e todas as denúncias do item, mas **não** a conversa | Claude | A conversa é privada e não é o objeto da denúncia |
+
 ## Operação
 
 | Fase | Decisão | Quem tomou | Consequência |

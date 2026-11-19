@@ -43,6 +43,14 @@ export const MyItemsQuery = PaginationQuery.extend({
 export type MyItemsQuery = z.infer<typeof MyItemsQuery>;
 
 // ── Saída ──
+export const ModerationStatus = z.enum(['VISIVEL', 'OCULTO', 'REMOVIDO']);
+
+/** Moderação do anúncio. O motivo só vem para o doador (null para os demais). */
+const moderationFields = {
+  moderation_status: ModerationStatus,
+  moderation_reason: z.string().nullable(),
+};
+
 export const PhotoDto = z.object({ id: z.uuid(), photo_url: z.string() }).describe('Photo');
 
 export const ItemDto = z
@@ -60,6 +68,7 @@ export const ItemDto = z
     photos: z.array(PhotoDto),
     created_at: isoDate(),
     completed_at: isoDate().nullable(),
+    ...moderationFields,
   })
   .describe('Item');
 export type ItemDto = z.infer<typeof ItemDto>;
@@ -83,6 +92,7 @@ export const FeedItemDto = z
     created_at: isoDate(),
     donor: DonorDto,
     photos: z.array(z.string()),
+    ...moderationFields,
   })
   .describe('FeedItem');
 export type FeedItemDto = z.infer<typeof FeedItemDto>;
@@ -128,6 +138,8 @@ const baseItem = (item: Item, photos: { id: string; photo_url: string }[]) => ({
   photos,
   created_at: toIso(item.created_at),
   completed_at: toIsoOrNull(item.completed_at),
+  moderation_status: item.moderation_status,
+  moderation_reason: item.moderation_reason,
 });
 
 export const toItemDto = (item: Item & { photos: ItemPhoto[] }): ItemDto =>
@@ -150,6 +162,8 @@ export const toFeedItemDto = (v: ItemView & ViewerContext): FeedItemDto => ({
   created_at: toIso(v.created_at),
   donor: { id: v.donor_id, name: abbreviateName(v.donor_name), avatar_url: v.donor_avatar_url ?? null },
   photos: v.photos,
+  moderation_status: v.moderation_status,
+  moderation_reason: v.moderation_reason,
 });
 
 export const toItemListDto = (page: { total: number; rows: (ItemView & ViewerContext)[] }): ItemListDto => ({

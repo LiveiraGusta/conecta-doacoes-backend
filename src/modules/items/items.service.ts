@@ -31,9 +31,13 @@ const REQUIRED_PHOTOS = 3;
 const NO_VIEWER = '00000000-0000-0000-0000-000000000000';
 
 export const createItemsService = ({ db, itemsRepo, eventsRepo, storage }: ItemsDeps) => {
-  /** Contexto de quem está vendo: ONG não ativa não vê "já curti" (o frontend esconde o botão). */
+  /**
+   * Contexto de quem está vendo: ONG não ativa não vê "já curti" (o frontend esconde o botão).
+   * O motivo da remoção pela moderação é só do doador.
+   */
   const withViewer = (viewer: AuthUser) => (v: ItemView): ViewedItem => ({
     ...v,
+    moderation_reason: viewer.id === v.donor_id ? v.moderation_reason : null,
     has_user_interest: viewer.role === 'NGO' && viewer.ngoStatus === 'ATIVO' ? v.has_user_interest : false,
     is_selected: viewer.role === 'NGO' && v.selected_ngo_id === viewer.id,
   });
@@ -111,9 +115,12 @@ export const createItemsService = ({ db, itemsRepo, eventsRepo, storage }: Items
       return mapPage(viewer, page);
     },
 
+    /** Anúncio oculto ou removido pela moderação só aparece para o doador, a ONG escolhida e o Admin. */
     async detail(viewer: AuthUser, itemId: string): Promise<ViewedItem> {
       const view = await itemsRepo.findView(db.sql, itemId, viewer.id);
       if (!view) throw new AppError('ITEM_NOT_FOUND');
+      const insider = viewer.role === 'ADMIN' || viewer.id === view.donor_id || viewer.id === view.selected_ngo_id;
+      if (view.moderation_status !== 'VISIVEL' && !insider) throw new AppError('ITEM_NOT_FOUND');
       return withViewer(viewer)(view);
     },
 
@@ -132,10 +139,11 @@ export const createItemsService = ({ db, itemsRepo, eventsRepo, storage }: Items
       return itemsRepo.findFeed(db.sql, { ...f, viewerId: NO_VIEWER });
     },
 
-    /** Visitante: só itens que estão no feed (DISPONIVEL ou EM_PROGRESSO); o resto é 404. */
+    /** Visitante: só itens que estão no feed (DISPONIVEL ou EM_PROGRESSO, e VISIVEL); o resto é 404. */
     async publicDetail(itemId: string): Promise<ItemView> {
       const view = await itemsRepo.findView(db.sql, itemId, NO_VIEWER);
-      if (!view || (view.status !== 'DISPONIVEL' && view.status !== 'EM_PROGRESSO')) throw new AppError('ITEM_NOT_FOUND');
+      const inFeed = view && (view.status === 'DISPONIVEL' || view.status === 'EM_PROGRESSO');
+      if (!view || !inFeed || view.moderation_status !== 'VISIVEL') throw new AppError('ITEM_NOT_FOUND');
       return view;
     },
   };
