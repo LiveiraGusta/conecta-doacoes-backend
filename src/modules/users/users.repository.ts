@@ -15,7 +15,7 @@ export const usersRepository = {
              np.cep, np.street, np.number, np.complement, np.neighborhood,
              COALESCE(up.show_donations, FALSE) AS show_donations,
              (SELECT count(*)::int FROM items i
-              WHERE i.status = 'DOADO'
+              WHERE i.status = 'DOADO' AND i.moderation_status = 'VISIVEL'
                 AND (CASE WHEN u.role = 'DONOR' THEN i.donor_id ELSE i.selected_ngo_id END) = u.id) AS donations_count
       FROM users u
       LEFT JOIN ngo_profiles np ON np.user_id = u.id

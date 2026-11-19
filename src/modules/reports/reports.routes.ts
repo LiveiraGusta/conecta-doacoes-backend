@@ -4,8 +4,11 @@ import { requireRole, userRateLimitKey } from '../../core/auth';
 import { errorResponses, ItemIdParams } from '../../core/dto';
 import type { ReportsController } from './reports.controller';
 import {
+  CreateItemReportBody,
   CreateReportBody,
   ListReportsQuery,
+  ModerationResultDto,
+  RemoveItemBody,
   ReportDetailDto,
   ReportDto,
   ReportIdParams,
@@ -29,6 +32,19 @@ export function reportsRoutes(app: FastifyInstance, ctrl: ReportsController) {
       response: { 201: ReportDto, ...errorResponses(400, 401, 403, 404, 409, 429) },
     },
     handler: ctrl.create,
+  });
+
+  r.post('/items/:itemId/report', {
+    preHandler: [requireRole('DONOR', 'NGO')],
+    config: { rateLimit: { max: 5, timeWindow: '1 minute', keyGenerator: userRateLimitKey } },
+    schema: {
+      tags: ['Reports'],
+      summary: 'Denunciar o conteúdo de um anúncio (DONOR ou NGO, menos o dono)',
+      params: ItemIdParams,
+      body: CreateItemReportBody,
+      response: { 201: ReportDto, ...errorResponses(400, 401, 403, 404, 409, 429) },
+    },
+    handler: ctrl.createForItem,
   });
 
   r.get('/admin/reports', {
@@ -63,5 +79,28 @@ export function reportsRoutes(app: FastifyInstance, ctrl: ReportsController) {
       response: { 200: ReportDto, ...errorResponses(400, 401, 403, 404) },
     },
     handler: ctrl.resolve,
+  });
+
+  r.post('/admin/items/:itemId/remove', {
+    preHandler: admin,
+    schema: {
+      tags: ['Reports'],
+      summary: 'Remover anúncio pela moderação (ADMIN; idempotente)',
+      params: ItemIdParams,
+      body: RemoveItemBody,
+      response: { 200: ModerationResultDto, ...errorResponses(400, 401, 403, 404) },
+    },
+    handler: ctrl.removeItem,
+  });
+
+  r.post('/admin/items/:itemId/restore', {
+    preHandler: admin,
+    schema: {
+      tags: ['Reports'],
+      summary: 'Manter/republicar anúncio, descartando as denúncias abertas (ADMIN)',
+      params: ItemIdParams,
+      response: { 200: ModerationResultDto, ...errorResponses(400, 401, 403, 404) },
+    },
+    handler: ctrl.restoreItem,
   });
 }

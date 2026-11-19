@@ -62,7 +62,7 @@ Uma conexão pode acompanhar até 50 salas ao mesmo tempo, por exemplo a lista d
   "item_id": "uuid",
   "previous_status": "EM_PROGRESSO",
   "status": "DOADO" | "DISPONIVEL",
-  "changed_by": "DONOR" | "NGO",
+  "changed_by": "DONOR" | "NGO" | "ADMIN",  // ADMIN: a moderação removeu o anúncio (só com status = DISPONIVEL)
   "reason": "string" | null,          // motivo do cancelamento, se houver
   "completed_at": "ISO 8601" | null   // preenchido quando status = DOADO
 }

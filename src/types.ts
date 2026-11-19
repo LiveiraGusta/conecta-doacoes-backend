@@ -6,6 +6,8 @@ export type Category = 'ROUPAS' | 'BRINQUEDOS' | 'ALIMENTOS' | 'LIVROS';
 export type ItemStatus = 'DISPONIVEL' | 'EM_PROGRESSO' | 'DOADO';
 /** Status que aparece em item_events (CANCELADO nunca fica gravado em items.status). */
 export type EventStatus = ItemStatus | 'CANCELADO';
+/** Moderação do anúncio, independente do status da doação. */
+export type ModerationStatus = 'VISIVEL' | 'OCULTO' | 'REMOVIDO';
 export type ThemeColor = 'AZUL' | 'VERDE' | 'ROXO' | 'LARANJA' | 'ROSA';
 export type ThemeMode = 'LIGHT' | 'DARK' | 'SYSTEM';
 
@@ -91,6 +93,11 @@ export interface Item {
   selected_ngo_id: string | null;
   created_at: Date;
   completed_at: Date | null;
+  moderation_status: ModerationStatus;
+  /** Motivo da remoção pelo Admin (mostrado ao doador). */
+  moderation_reason: string | null;
+  moderated_at?: Date | null;
+  moderated_by?: string | null;
 }
 
 export interface ItemPhoto {
@@ -222,14 +229,23 @@ export interface UnreadSummary {
 }
 
 export type ReportStatus = 'ABERTA' | 'RESOLVIDA';
+/** CHAT: a outra parte da negociação. ITEM: o conteúdo do anúncio. */
+export type ReportKind = 'CHAT' | 'ITEM';
+export type ReportCategory = 'NUDEZ' | 'ODIO' | 'VIOLENCIA' | 'GOLPE' | 'PROIBIDO' | 'SPAM' | 'OUTRO';
+export type ReportResolution = 'ITEM_REMOVIDO' | 'IMPROCEDENTE';
 
 export interface Report {
   id: string;
   item_id: string;
   reporter_id: string;
   reported_id: string;
-  reason: string;
+  kind: ReportKind;
+  /** Só nas denúncias de anúncio. */
+  category: ReportCategory | null;
+  /** Obrigatório no CHAT; opcional no ITEM (salvo na categoria OUTRO). */
+  reason: string | null;
   status: ReportStatus;
+  resolution: ReportResolution | null;
   created_at: Date;
   resolved_at: Date | null;
   resolved_by: string | null;
@@ -238,12 +254,16 @@ export interface Report {
 /** Uma linha da fila de denúncias do Admin. */
 export interface ReportSummary {
   id: string;
+  kind: ReportKind;
+  category: ReportCategory | null;
   status: ReportStatus;
-  reason: string;
+  resolution: ReportResolution | null;
+  reason: string | null;
   created_at: Date;
   item_id: string;
   item_title: string;
   item_status: ItemStatus;
+  item_moderation_status: ModerationStatus;
   reporter_id: string;
   reporter_name: string;
   reporter_role: Role;
@@ -256,4 +276,16 @@ export interface ReportSummary {
 export interface ReportParty extends Counterpart {
   email: string;
   ngo_profile_id: string | null;
+}
+
+/** Denúncia de anúncio com o nome de quem denunciou (detalhe do Admin). */
+export interface ItemReportRow {
+  id: string;
+  category: ReportCategory;
+  reason: string | null;
+  status: ReportStatus;
+  created_at: Date;
+  reporter_id: string;
+  reporter_name: string;
+  reporter_role: Role;
 }

@@ -40,7 +40,10 @@ tags:
       de sessão no handshake (protocolo em "Spec do Chat em Tempo Real — WebSocket.md"); as rotas REST abaixo
       continuam valendo.
   - name: Reports
-    description: Módulo 4 — Denúncias
+    description: |
+      Módulo 4 — Denúncias. Dois tipos: de negociação (`CHAT`, a outra parte) e de anúncio (`ITEM`, conteúdo
+      impróprio: nudez, ódio, violência, golpe, item proibido, spam). Com 3 pessoas diferentes com denúncia de
+      anúncio aberta, o anúncio sai do ar sozinho (`moderation_status: OCULTO`) até o Admin removê-lo ou mantê-lo.
   - name: Profile
     description: Perfil do usuário logado
   - name: Users
@@ -469,7 +472,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/ItemNotFound' }
         '409':
-          description: ITEM_NOT_AVAILABLE, NGO_NOT_INTERESTED ou NGO_NOT_ACTIVE
+          description: ITEM_NOT_AVAILABLE, NGO_NOT_INTERESTED, NGO_NOT_ACTIVE, ITEM_UNDER_REVIEW ou ITEM_REMOVED
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
 
   # ───────────────────────── Módulo 4 — Chat, Encerramento & Denúncias ─────────────────────────
@@ -673,12 +676,54 @@ paths:
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /items/{itemId}/report:
+    parameters:
+      - $ref: '#/components/parameters/ItemId'
+    post:
+      tags: [Reports]
+      summary: Denunciar o conteúdo de um anúncio
+      description: |
+        Qualquer DONOR ou NGO logado (de qualquer status), menos o dono do item. Anúncio removido, ou oculto para
+        quem não é da negociação, responde 404. Uma denúncia de anúncio aberta por usuário e item.
+        Com 3 pessoas diferentes com denúncia aberta, o anúncio fica OCULTO (sai do feed e das listas) até o Admin decidir.
+        Limite: 5 por minuto, por usuário.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category]
+              properties:
+                category: { $ref: '#/components/schemas/ReportCategory' }
+                reason:
+                  type: string
+                  maxLength: 1000
+                  description: Opcional; obrigatório (mínimo de 10 caracteres) na categoria OUTRO
+      responses:
+        '201':
+          description: Denúncia aberta
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Report' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: FORBIDDEN (Admin, ou o dono do item)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '404': { $ref: '#/components/responses/ItemNotFound' }
+        '409':
+          description: ITEM_ALREADY_REPORTED
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /admin/reports:
     get:
       tags: [Reports]
       summary: Fila de denúncias (ADMIN)
       parameters:
         - { name: status, in: query, schema: { type: string, enum: [ABERTA, RESOLVIDA], default: ABERTA } }
+        - { name: kind, in: query, description: 'Sem o filtro, os dois tipos', schema: { $ref: '#/components/schemas/ReportKind' } }
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Offset'
       responses:
@@ -701,10 +746,12 @@ paths:
       - { name: reportId, in: path, required: true, schema: { type: string, format: uuid } }
     get:
       tags: [Reports]
-      summary: Denúncia com conversa completa (ADMIN)
+      summary: Denúncia com o contexto do item (ADMIN)
       responses:
         '200':
-          description: Denúncia, partes, eventos e todas as mensagens do item
+          description: |
+            Denúncia, partes, fotos, denúncias de anúncio do item e eventos. Todas as mensagens do item vêm só
+            nas denúncias de negociação (`CHAT`); nas de anúncio, `messages` é vazio.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ReportDetail' }
@@ -715,7 +762,9 @@ paths:
     patch:
       tags: [Reports]
       summary: Resolver denúncia (ADMIN)
-      description: Idempotente — resolver uma denúncia já resolvida devolve 200 com ela como está.
+      description: |
+        Idempotente — resolver uma denúncia já resolvida devolve 200 com ela como está.
+        Denúncia de anúncio aberta responde 409 CONFLICT: use /admin/items/{itemId}/remove ou /restore.
       requestBody:
         required: true
         content:
@@ -735,6 +784,61 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/ReportNotFound' }
+        '409':
+          description: CONFLICT (denúncia de anúncio aberta)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /admin/items/{itemId}/remove:
+    parameters:
+      - $ref: '#/components/parameters/ItemId'
+    post:
+      tags: [Reports]
+      summary: Remover anúncio pela moderação (ADMIN)
+      description: |
+        O anúncio sai do ar de vez (`moderation_status: REMOVIDO`) e o doador vê o motivo em "Minhas doações".
+        Item EM_PROGRESSO: a negociação é cancelada (volta a DISPONIVEL, eventos EM_PROGRESSO → CANCELADO →
+        DISPONIVEL com o Admin como autor; as partes recebem `item.status_changed` no WebSocket).
+        As denúncias de anúncio abertas do item ficam RESOLVIDA com `resolution: ITEM_REMOVIDO`.
+        Idempotente: remover de novo não muda o motivo nem cancela nada.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 10, maxLength: 500, description: 'Mostrado ao doador' }
+      responses:
+        '200':
+          description: Anúncio removido
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModerationResult' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/ItemNotFound' }
+
+  /admin/items/{itemId}/restore:
+    parameters:
+      - $ref: '#/components/parameters/ItemId'
+    post:
+      tags: [Reports]
+      summary: Manter (ou republicar) anúncio (ADMIN)
+      description: |
+        O anúncio volta a VISIVEL e as denúncias de anúncio abertas ficam RESOLVIDA com `resolution: IMPROCEDENTE`.
+        Também desfaz uma remoção por engano (a negociação cancelada não volta).
+      responses:
+        '200':
+          description: Anúncio no ar
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModerationResult' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/ItemNotFound' }
 
   # ───────────────────────── Perfil ─────────────────────────
   /profile:
@@ -1217,6 +1321,26 @@ components:
     NgoStatus: { type: string, enum: [PENDENTE_APROVACAO, ATIVO, REJEITADO] }
     Category: { type: string, enum: [ROUPAS, BRINQUEDOS, ALIMENTOS, LIVROS] }
     ItemStatus: { type: string, enum: [DISPONIVEL, EM_PROGRESSO, DOADO] }
+    ModerationStatus:
+      type: string
+      enum: [VISIVEL, OCULTO, REMOVIDO]
+      description: |
+        Moderação do anúncio, independente do status da doação. OCULTO: saiu do ar sozinho por denúncias e
+        aguarda o Admin. REMOVIDO: o Admin tirou do ar. Fora de VISIVEL, o item some do feed, das rotas públicas,
+        da página pessoal e das listas das ONGs (salvo da ONG escolhida); o detalhe só abre para o doador,
+        a ONG escolhida e o Admin. Curtir responde 404; escolher ONG, 409 ITEM_UNDER_REVIEW ou ITEM_REMOVED.
+    ReportKind: { type: string, enum: [CHAT, ITEM] }
+    ReportCategory:
+      type: string
+      enum: [NUDEZ, ODIO, VIOLENCIA, GOLPE, PROIBIDO, SPAM, OUTRO]
+      description: |
+        Denúncia de anúncio. NUDEZ: nudez ou conteúdo sexual. ODIO: discurso de ódio ou discriminação.
+        VIOLENCIA: violência ou conteúdo chocante. GOLPE: golpe, fraude ou cobrança. PROIBIDO: item proibido
+        (armas, drogas, medicamentos, animais). SPAM: não é doação ou é propaganda. OUTRO: descrever em `reason`.
+    ReportResolution:
+      type: [string, 'null']
+      enum: [ITEM_REMOVIDO, IMPROCEDENTE, null]
+      description: Desfecho da moderação de anúncio; null nas denúncias de negociação e nas abertas
 
     Readiness:
       type: object
@@ -1322,7 +1446,7 @@ components:
 
     Item:
       type: object
-      required: [id, donor_id, title, notes, category, city, state, status, photos, created_at]
+      required: [id, donor_id, title, notes, category, city, state, status, photos, created_at, moderation_status, moderation_reason]
       properties:
         id: { type: string, format: uuid }
         donor_id: { type: string, format: uuid }
@@ -1337,6 +1461,8 @@ components:
         photos: { type: array, minItems: 3, maxItems: 3, items: { $ref: '#/components/schemas/Photo' } }
         created_at: { type: string, format: date-time }
         completed_at: { type: [string, 'null'], format: date-time }
+        moderation_status: { $ref: '#/components/schemas/ModerationStatus' }
+        moderation_reason: { type: [string, 'null'], description: 'Motivo da remoção; só para o doador (null para os demais)' }
 
     Donor:
       type: object
@@ -1361,6 +1487,8 @@ components:
         created_at: { type: string, format: date-time }
         donor: { $ref: '#/components/schemas/Donor' }
         photos: { type: array, minItems: 3, maxItems: 3, items: { type: string, format: uri } }
+        moderation_status: { $ref: '#/components/schemas/ModerationStatus' }
+        moderation_reason: { type: [string, 'null'], description: 'Motivo da remoção; só para o doador (null para os demais)' }
 
     ItemDetail:
       allOf:
@@ -1488,22 +1616,35 @@ components:
 
     Report:
       type: object
-      required: [id, item_id, reporter_id, reported_id, reason, status, created_at]
+      required: [id, item_id, reporter_id, reported_id, kind, category, reason, status, resolution, created_at]
       properties:
         id: { type: string, format: uuid }
         item_id: { type: string, format: uuid }
         reporter_id: { type: string, format: uuid }
-        reported_id: { type: string, format: uuid }
-        reason: { type: string }
+        reported_id: { type: string, format: uuid, description: 'Na denúncia de anúncio, o doador do item' }
+        kind: { $ref: '#/components/schemas/ReportKind' }
+        category:
+          description: Só nas denúncias de anúncio
+          oneOf:
+            - $ref: '#/components/schemas/ReportCategory'
+            - type: 'null'
+        reason: { type: [string, 'null'], description: 'Sempre na de negociação; opcional na de anúncio' }
         status: { type: string, enum: [ABERTA, RESOLVIDA] }
+        resolution: { $ref: '#/components/schemas/ReportResolution' }
         created_at: { type: string, format: date-time }
 
     ReportSummary:
       type: object
       properties:
         id: { type: string, format: uuid }
+        kind: { $ref: '#/components/schemas/ReportKind' }
+        category:
+          oneOf:
+            - $ref: '#/components/schemas/ReportCategory'
+            - type: 'null'
         status: { type: string, enum: [ABERTA, RESOLVIDA] }
-        reason: { type: string }
+        resolution: { $ref: '#/components/schemas/ReportResolution' }
+        reason: { type: [string, 'null'] }
         created_at: { type: string, format: date-time }
         item:
           type: object
@@ -1511,6 +1652,7 @@ components:
             id: { type: string, format: uuid }
             title: { type: string }
             status: { $ref: '#/components/schemas/ItemStatus' }
+            moderation_status: { $ref: '#/components/schemas/ModerationStatus' }
         reporter: { $ref: '#/components/schemas/Counterpart' }
         reported: { $ref: '#/components/schemas/Counterpart' }
 
@@ -1521,17 +1663,27 @@ components:
           type: object
           properties:
             id: { type: string, format: uuid }
+            kind: { $ref: '#/components/schemas/ReportKind' }
+            category:
+              oneOf:
+                - $ref: '#/components/schemas/ReportCategory'
+                - type: 'null'
             status: { type: string, enum: [ABERTA, RESOLVIDA] }
-            reason: { type: string }
+            resolution: { $ref: '#/components/schemas/ReportResolution' }
+            reason: { type: [string, 'null'] }
             created_at: { type: string, format: date-time }
         item:
           type: object
           properties:
             id: { type: string, format: uuid }
             title: { type: string }
+            description: { type: [string, 'null'] }
             status: { $ref: '#/components/schemas/ItemStatus' }
             donor_id: { type: string, format: uuid }
             selected_ngo_id: { type: [string, 'null'], format: uuid }
+            photos: { type: array, items: { type: string, format: uri } }
+            moderation_status: { $ref: '#/components/schemas/ModerationStatus' }
+            moderation_reason: { type: [string, 'null'] }
         reporter:
           allOf:
             - $ref: '#/components/schemas/Counterpart'
@@ -1545,6 +1697,19 @@ components:
               properties:
                 email: { type: string, format: email }
                 ngo_profile_id: { type: [string, 'null'], format: uuid }
+        item_reports:
+          type: array
+          description: Todas as denúncias de anúncio do item (abertas e resolvidas), mais antigas primeiro
+          items:
+            type: object
+            required: [id, category, reason, status, created_at, reporter]
+            properties:
+              id: { type: string, format: uuid }
+              category: { $ref: '#/components/schemas/ReportCategory' }
+              reason: { type: [string, 'null'] }
+              status: { type: string, enum: [ABERTA, RESOLVIDA] }
+              created_at: { type: string, format: date-time }
+              reporter: { $ref: '#/components/schemas/Counterpart' }
         events:
           type: array
           items:
@@ -1555,7 +1720,21 @@ components:
               actor_id: { type: [string, 'null'], format: uuid }
               reason: { type: [string, 'null'] }
               created_at: { type: string, format: date-time }
-        messages: { type: array, items: { $ref: '#/components/schemas/Message' } }
+        messages:
+          type: array
+          description: Só nas denúncias de negociação; vazio nas de anúncio
+          items: { $ref: '#/components/schemas/Message' }
+
+    ModerationResult:
+      type: object
+      required: [item_id, status, moderation_status, moderation_reason, cancelled_negotiation, resolved_reports]
+      properties:
+        item_id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/ItemStatus' }
+        moderation_status: { $ref: '#/components/schemas/ModerationStatus' }
+        moderation_reason: { type: [string, 'null'] }
+        cancelled_negotiation: { type: boolean, description: 'A remoção desfez uma negociação em andamento' }
+        resolved_reports: { type: integer, minimum: 0, description: 'Denúncias de anúncio abertas resolvidas por esta ação' }
 
     # ── Página pessoal e visitante ──
     UserProfile:

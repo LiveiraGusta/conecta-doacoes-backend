@@ -32,6 +32,8 @@ const VIEW: ItemView = {
   selected_ngo_id: 'n1',
   created_at: new Date(),
   completed_at: null,
+  moderation_status: 'VISIVEL',
+  moderation_reason: null,
   donor_name: 'Marina Souza',
   photos: ['a', 'b', 'c'],
   photo_ids: ['1', '2', '3'],
