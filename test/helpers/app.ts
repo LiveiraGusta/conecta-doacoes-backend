@@ -2,6 +2,7 @@ import type { FastifyInstance, RouteOptions } from 'fastify';
 import { buildApp } from '../../src/app';
 import { createDb, type Db } from '../../src/core/db';
 import type { EmailMessage, Mailer } from '../../src/core/email';
+import type { Notifier } from '../../src/modules/notifications/notifications.service';
 import { fakeStorage, type FakeStorage } from './fake-storage';
 
 export interface TestContext {
@@ -14,6 +15,8 @@ export interface TestContext {
   routes: RouteOptions[];
   /** E-mails enviados pela app (fake em memória). */
   outbox: EmailMessage[];
+  /** Espera os e-mails de notificação em segundo plano e devolve a caixa de saída. */
+  flushEmails(): Promise<EmailMessage[]>;
 }
 
 /** App completo contra o Postgres de teste, com Storage fake. Feche com `closeTestApp`. */
@@ -23,7 +26,15 @@ export async function buildTestApp(overrides: { db?: Db } = {}): Promise<TestCon
   const routes: RouteOptions[] = [];
   const outbox: EmailMessage[] = [];
   const mailer: Mailer = { send: async (m) => void outbox.push(m) };
-  const app = await buildApp({ db, storage, mailer, logger: false, onRoute: (r) => routes.push(r) });
+  let notifier: Notifier | undefined;
+  const app = await buildApp({
+    db,
+    storage,
+    mailer,
+    logger: false,
+    onRoute: (r) => routes.push(r),
+    onNotifier: (n) => (notifier = n),
+  });
   await app.ready();
   const rawInject = app.inject.bind(app) as FastifyInstance['inject'];
   app.inject = ((opts?: unknown, cb?: unknown) => {
@@ -33,7 +44,11 @@ export async function buildTestApp(overrides: { db?: Db } = {}): Promise<TestCon
     }
     return (rawInject as (...a: unknown[]) => unknown)(opts, cb);
   }) as FastifyInstance['inject'];
-  return { app, rawInject, db, storage, routes, outbox };
+  const flushEmails = async () => {
+    await notifier?.drain();
+    return outbox;
+  };
+  return { app, rawInject, db, storage, routes, outbox, flushEmails };
 }
 
 export async function closeTestApp(ctx: TestContext) {

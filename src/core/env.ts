@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { z } from 'zod';
+import { parseAddress } from './email';
 
 const bool = z.enum(['true', 'false']).transform((v) => v === 'true');
 
@@ -13,11 +14,13 @@ const PLATFORM_SUFFIXES = ['vercel.app', 'onrender.com', 'netlify.app', 'railway
 const onPlatformSuffix = (host: string) => PLATFORM_SUFFIXES.some((s) => host === s || host.endsWith(`.${s}`));
 
 /** Regras que só valem em produção: config errada aqui derruba o login sem erro aparente, então a API nem sobe. */
-function checkProduction(e: { COOKIE_SECURE: boolean; RESEND_API_KEY?: string; CORS_ORIGIN: string[]; APP_URL: string; COOKIE_DOMAIN?: string }, ctx: z.RefinementCtx) {
+function checkProduction(e: { COOKIE_SECURE: boolean; BREVO_API_KEY?: string; RESEND_API_KEY?: string; CORS_ORIGIN: string[]; APP_URL: string; COOKIE_DOMAIN?: string }, ctx: z.RefinementCtx) {
   const issue = (path: string, message: string) => ctx.addIssue({ code: 'custom', path: [path], message });
 
   if (!e.COOKIE_SECURE) issue('COOKIE_SECURE', 'Obrigatório true em produção (HTTPS)');
-  if (!e.RESEND_API_KEY) issue('RESEND_API_KEY', 'Obrigatória em produção (recuperação de senha)');
+  if (!e.BREVO_API_KEY && !e.RESEND_API_KEY) {
+    issue('BREVO_API_KEY', 'Em produção, informe BREVO_API_KEY ou RESEND_API_KEY (recuperação de senha e notificações)');
+  }
   if (e.CORS_ORIGIN.length === 0) issue('CORS_ORIGIN', 'Informe a origem do frontend (ex.: https://app.seudominio.com.br)');
 
   const cookieDomain = e.COOKIE_DOMAIN?.replace(/^\./, '');
@@ -42,6 +45,17 @@ function checkProduction(e: { COOKIE_SECURE: boolean; RESEND_API_KEY?: string; C
   const app = new URL(e.APP_URL);
   if (app.protocol !== 'https:') issue('APP_URL', 'Use https em produção');
   if (!e.CORS_ORIGIN.includes(app.origin)) issue('APP_URL', `${app.origin} precisa estar no CORS_ORIGIN (é o mesmo frontend)`);
+}
+
+/** O Brevo só aceita um remetente verificado no painel; o padrão do Resend nunca vai estar lá. */
+function checkBrevoSender(from: string, ctx: z.RefinementCtx) {
+  const sender = parseAddress(from);
+  const message = !sender
+    ? 'Use "Nome <email@exemplo.com>" ou só o e-mail'
+    : sender.email.endsWith('@resend.dev')
+      ? 'Com BREVO_API_KEY, use o e-mail verificado como remetente no Brevo (Senders), ex.: Conecta Doações <seuemail@gmail.com>'
+      : undefined;
+  if (message) ctx.addIssue({ code: 'custom', path: ['EMAIL_FROM'], message });
 }
 
 export const EnvSchema = z.object({
@@ -82,13 +96,16 @@ export const EnvSchema = z.object({
   BODY_LIMIT_MB: z.coerce.number().default(1),
   UPLOAD_MAX_FILE_MB: z.coerce.number().default(5),
   SWAGGER_ENABLED: bool.default(false),
-  // ── E-mail (recuperação de senha) ──
-  // Sem chave, o e-mail sai no log em vez de ser enviado (só fora de produção).
+  // ── E-mail (recuperação de senha e notificações do fluxo) ──
+  // Provedor: Brevo (sem domínio próprio, só o remetente verificado) tem prioridade sobre o Resend.
+  // Sem nenhuma chave, o e-mail sai no log em vez de ser enviado (só fora de produção).
+  BREVO_API_KEY: z.preprocess((v) => (v === '' ? undefined : v), z.string().startsWith('xkeysib-').optional()),
   RESEND_API_KEY: z.preprocess((v) => (v === '' ? undefined : v), z.string().startsWith('re_').optional()),
   EMAIL_FROM: z.string().min(3).default('Conecta Doações <onboarding@resend.dev>'),
-  // Frontend: o link do e-mail aponta para APP_URL/redefinir-senha?token=…
+  // Frontend: base dos links dos e-mails (APP_URL/redefinir-senha?token=…, APP_URL/chats/<item>…)
   APP_URL: z.url().default('http://localhost:5173'),
 }).superRefine((e, ctx) => {
+  if (e.BREVO_API_KEY) checkBrevoSender(e.EMAIL_FROM, ctx);
   if (e.NODE_ENV === 'production') checkProduction(e, ctx);
 });
 

@@ -20,13 +20,15 @@ function setup(opts: { item?: Item | null; repo?: Partial<ReportsRepository> } =
     resolveIfOpen: vi.fn(async () => null as Report | null),
     ...opts.repo,
   } as unknown as ReportsRepository & Record<string, ReturnType<typeof vi.fn>>;
+  const notifier = { notify: vi.fn(), drain: async () => {} };
   const service = createReportsService({
     db: fakeDb(),
     itemsRepo: { findById: async () => (opts.item === undefined ? item() : opts.item) },
     reportsRepo,
     eventsRepo: { listByItem: async () => [] },
+    notifier,
   });
-  return { service, reportsRepo };
+  return { service, reportsRepo, notifier };
 }
 
 describe('reportsService.create', () => {
@@ -39,15 +41,28 @@ describe('reportsService.create', () => {
     expect(b.reportsRepo.insert).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ reporterId: 'd1', reportedId: 'n1' }));
   });
 
+  it('agenda o aviso aos administradores', async () => {
+    const { service, notifier } = setup();
+    await service.create(DONOR, 'i1', 'motivo qualquer');
+    expect(notifier.notify).toHaveBeenCalledWith({
+      type: 'report.created',
+      reportId: REPORT.id,
+      itemId: 'i1',
+      reporterId: 'd1',
+      reportedId: 'n1',
+    });
+  });
+
   it.each([
     ['item inexistente', null, DONOR, 'ITEM_NOT_FOUND'],
     ['doador com item disponível', item({ status: 'DISPONIVEL', selected_ngo_id: null }), DONOR, 'CHAT_CLOSED'],
     ['ONG com item disponível', item({ status: 'DISPONIVEL', selected_ngo_id: null }), NGO, 'FORBIDDEN'],
     ['ONG que não foi escolhida', item(), OTHER, 'FORBIDDEN'],
   ])('%s → %s, sem gravar', async (_caso, it_, user, code) => {
-    const { service, reportsRepo } = setup({ item: it_ as Item | null });
+    const { service, reportsRepo, notifier } = setup({ item: it_ as Item | null });
     await expect(service.create(user, 'i1', 'motivo qualquer')).rejects.toMatchObject({ code });
     expect(reportsRepo.insert).not.toHaveBeenCalled();
+    expect(notifier.notify).not.toHaveBeenCalled();
   });
 });
 

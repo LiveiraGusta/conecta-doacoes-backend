@@ -34,8 +34,17 @@ describe('variáveis de ambiente em produção', () => {
     expect(errors({ COOKIE_SECURE: 'false' })).toHaveProperty('COOKIE_SECURE');
   });
 
-  it('exige a chave do Resend', () => {
-    expect(errors({ RESEND_API_KEY: undefined })).toHaveProperty('RESEND_API_KEY');
+  it('exige a chave de um provedor de e-mail (Brevo ou Resend)', () => {
+    expect(errors({ RESEND_API_KEY: undefined })).toHaveProperty('BREVO_API_KEY');
+  });
+
+  it('aceita só o Brevo, com remetente verificado', () => {
+    const errs = errors({ RESEND_API_KEY: undefined, BREVO_API_KEY: 'xkeysib-chave', EMAIL_FROM: 'Conecta <eu@gmail.com>' });
+    expect(errs).toEqual({});
+  });
+
+  it('recusa chave do Brevo em formato errado', () => {
+    expect(errors({ BREVO_API_KEY: 're_chave' })).toHaveProperty('BREVO_API_KEY');
   });
 
   it('recusa front em domínio de plataforma (*.vercel.app, *.onrender.com)', () => {
@@ -71,6 +80,19 @@ describe('variáveis de ambiente em produção', () => {
   it('aceita várias origens dentro do mesmo domínio', () => {
     const errs = errors({ CORS_ORIGIN: 'https://app.conectadoacoes.com.br,https://www.conectadoacoes.com.br' });
     expect(errs).toEqual({});
+  });
+});
+
+describe('remetente com Brevo', () => {
+  const dev = { NODE_ENV: 'development', COOKIE_SECURE: 'false', COOKIE_DOMAIN: undefined, RESEND_API_KEY: undefined };
+
+  it('recusa o remetente padrão do Resend (nunca está verificado no Brevo)', () => {
+    const errs = errors({ ...dev, BREVO_API_KEY: 'xkeysib-chave', EMAIL_FROM: undefined });
+    expect(errs.EMAIL_FROM?.join(' ')).toContain('Brevo');
+  });
+
+  it('recusa remetente sem e-mail', () => {
+    expect(errors({ ...dev, BREVO_API_KEY: 'xkeysib-chave', EMAIL_FROM: 'Conecta Doações' })).toHaveProperty('EMAIL_FROM');
   });
 });
 

@@ -42,8 +42,9 @@ function setup(repo: Partial<ProfileRepository> = {}) {
     ...repo,
   } as unknown as ProfileRepository & Record<string, ReturnType<typeof vi.fn>>;
   const authRepo = { findById: async () => self, setPassword: vi.fn(async () => {}) };
-  const service = createProfileService({ db: fakeDb(), profileRepo, authRepo, storage, hasher });
-  return { service, storage, profileRepo, authRepo };
+  const notifier = { notify: vi.fn(), drain: async () => {} };
+  const service = createProfileService({ db: fakeDb(), profileRepo, authRepo, storage, hasher, notifier });
+  return { service, storage, profileRepo, authRepo, notifier };
 }
 
 describe('profileService.update', () => {
@@ -145,9 +146,16 @@ describe('profileService.changePassword', () => {
   });
 
   it('grava o hash novo', async () => {
-    const { service, authRepo } = setup();
+    const { service, authRepo, notifier } = setup();
     await service.changePassword(DONOR, 'Senha1234', 'Nova12345');
     expect(authRepo.setPassword).toHaveBeenCalledWith(expect.anything(), 'd1', 'h:Nova12345');
+    expect(notifier.notify).toHaveBeenCalledWith({ type: 'password.changed', userId: 'd1' });
+  });
+
+  it('senha atual errada não gera o aviso de senha alterada', async () => {
+    const { service, notifier } = setup();
+    await expect(service.changePassword(DONOR, 'Errada123', 'Nova12345')).rejects.toMatchObject({ code: 'INVALID_CURRENT_PASSWORD' });
+    expect(notifier.notify).not.toHaveBeenCalled();
   });
 });
 
@@ -168,20 +176,22 @@ describe('profileService.resubmitDocument', () => {
   });
 
   it('troca o arquivo: o novo fica, o antigo sai depois do commit', async () => {
-    const { service, storage } = setup();
+    const { service, storage, notifier } = setup();
     await storage.upload('docs', 'n1/old.pdf', PDF, 'application/pdf');
     await service.resubmitDocument(NGO, [PDF]);
+    expect(notifier.notify).toHaveBeenCalledWith({ type: 'ngo.document_resubmitted', userId: 'n1' });
     const keys = [...storage.files.keys()];
     expect(keys).toHaveLength(1);
     expect(keys[0]).toMatch(/^docs\/n1\/[0-9a-f-]+\.pdf$/);
   });
 
   it('se a ONG foi aprovada no meio do caminho, apaga o arquivo novo e responde NGO_ALREADY_ACTIVE', async () => {
-    const { service, storage } = setup({
+    const { service, storage, notifier } = setup({
       replaceDocumentUnlessActive: async () => ({ replaced: false, isActive: true }),
     });
     await expect(service.resubmitDocument(NGO, [PDF])).rejects.toMatchObject({ code: 'NGO_ALREADY_ACTIVE' });
     expect(storage.files.size).toBe(0);
+    expect(notifier.notify).not.toHaveBeenCalled();
   });
 });
 
@@ -196,12 +206,16 @@ describe('profileService.deleteAccount', () => {
     });
     expect(a.profileRepo.anonymize).not.toHaveBeenCalled();
     expect(b.profileRepo.anonymize).not.toHaveBeenCalled();
+    expect(a.notifier.notify).not.toHaveBeenCalled();
+    expect(b.notifier.notify).not.toHaveBeenCalled();
   });
 
   it('doador: apaga itens disponíveis e as fotos deles, e anonimiza', async () => {
-    const { service, storage, profileRepo } = setup();
+    const { service, storage, profileRepo, notifier } = setup();
     await storage.upload('items', 'i1/a.webp', PDF, 'image/webp');
     await service.deleteAccount(DONOR, 'Senha1234');
+    // O e-mail real vai no evento: depois da anonimização ele não existe mais no banco.
+    expect(notifier.notify).toHaveBeenCalledWith({ type: 'account.deleted', email: 'm@t.dev', name: 'Marina' });
     expect(profileRepo.deleteAvailableItemsOfDonor).toHaveBeenCalled();
     expect(profileRepo.deleteNgoProfile).not.toHaveBeenCalled();
     expect(profileRepo.anonymize).toHaveBeenCalledWith(expect.anything(), 'd1');

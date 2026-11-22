@@ -154,3 +154,28 @@ Mudanças pedidas no planejamento do frontend React. O plano e o registro comple
 | Produção | `render.yaml` passa a declarar `COOKIE_SECURE=true` e `COOKIE_DOMAIN` (`sync: false`, opcional); comentário do `CORS_ORIGIN` não sugere mais `*.vercel.app` | Claude | Sem `COOKIE_SECURE` a API não subia no Render. O domínio fica só nas variáveis do painel, nada fixo no código |
 | Produção | CI no GitHub Actions: lint, tipos, unitários, integração (Postgres 16 como serviço, porta 5433) e build | Claude | Antes, os testes só rodavam na máquina do dono. O PR `develop → main` passa a ter verificação |
 | CORS | `methods` explícito no CORS (`GET, HEAD, POST, PUT, PATCH, DELETE`) | Claude | O padrão do `@fastify/cors` v10+ é só `GET,HEAD,POST`: o navegador barrava no preflight toda chamada `PATCH`/`PUT`/`DELETE` do front (tema, perfil, fotos, exclusões). Os testes de inject não passam por CORS, por isso não pegaram; agora um teste confere o preflight de cada método |
+
+## Brevo como provedor de e-mail
+
+| Fase | Decisão | Quem tomou | Consequência |
+| --- | --- | --- | --- |
+| — | Adicionar o **Brevo** como provedor de e-mail, com prioridade sobre o Resend | Usuário | Envio grátis para qualquer destinatário sem comprar domínio: basta verificar o remetente no Brevo. O Resend continua no código para quando houver domínio |
+| — | O e-mail do Supabase não foi usado | Usuário | Só serve aos fluxos do Supabase Auth (a autenticação aqui é própria) e o servidor padrão só entrega para membros do time do projeto |
+| — | Em produção, basta **uma** das chaves (`BREVO_API_KEY` ou `RESEND_API_KEY`) | Claude | A regra de "API não sobe sem e-mail configurado" continua valendo |
+| — | Com Brevo, `EMAIL_FROM` é validado na subida e o padrão `@resend.dev` é recusado | Claude | Um remetente não verificado faria todo envio falhar em silêncio (o erro só vai para o log) |
+| — | Remetente @gmail.com enviado pelo Brevo não passa no DKIM/DMARC do Gmail | Claude | Parte dos e-mails pode cair no spam. Aceitável no MVP; com domínio próprio, autenticá-lo no Brevo resolve |
+| — | `.env.test` zera `BREVO_API_KEY` e `RESEND_API_KEY` | Claude | O `dotenv` do app completava o ambiente de teste com as chaves do `.env` local: os testes de `env` quebravam e havia risco de usar o provedor real |
+
+## Notificações por e-mail
+
+| Fase | Decisão | Quem tomou | Consequência |
+| --- | --- | --- | --- |
+| — | Enviar e-mail nos pontos importantes do fluxo | Usuário | Cadastro (doador e ONG), análise da ONG (aprovação, rejeição e reenvio do documento), interesse, escolha da ONG, cancelamento, doação concluída, denúncia, senha alterada e conta excluída. A lista completa está no [README](../README.md#e-mails) |
+| — | Módulo `notifications` sem rotas: os services chamam `notifier.notify(evento)` com ids, e o notificador busca os destinatários e envia em segundo plano | Claude | Os services não conhecem e-mail nem texto. Falha no envio só vai para o log e nunca muda a resposta. `notifier` é opcional nos services (padrão `noopNotifier`), e os testes antigos continuam válidos |
+| — | **Mensagens de chat não geram e-mail** | Claude | O app já avisa em tempo real (WebSocket e badge), e cada mensagem viraria um e-mail, o que estoura o limite grátis do Brevo (cerca de 300 por dia) |
+| — | Cada nova ONG interessada gera um e-mail para o doador | Claude | É a informação de que o doador precisa para escolher. Se o volume crescer, dá para agrupar num resumo |
+| — | Administradores recebem e-mail de ONG nova, documento reenviado e denúncia | Claude | Vai para todos os usuários `ADMIN` ativos. Sem isso, a fila de análise só é vista quando alguém abre o painel |
+| — | A troca de senha (perfil ou link de redefinição) gera aviso de segurança | Claude | Se não foi a pessoa, ela é orientada a usar "Esqueci a senha" na hora |
+| — | Na exclusão de conta, o e-mail vai no evento | Claude | A anonimização troca o e-mail no banco; depois dela, o endereço real não existe mais para ser buscado |
+| — | Sem opção de desligar os e-mails no perfil, por enquanto | Claude | Exigiria migração, nova preferência e tela no frontend. Fica como próximo passo, se pedirem |
+| — | A API espera os envios em andamento ao desligar (`onClose`) | Claude | Um deploy no meio de um envio não perde o e-mail |

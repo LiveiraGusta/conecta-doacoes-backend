@@ -4,6 +4,7 @@ import { AppError } from '../../core/errors';
 import { detectFileKind, MIME } from '../../core/images';
 import type { PasswordHasher } from '../../core/passwords';
 import type { Storage } from '../../core/storage';
+import { noopNotifier, type Notifier } from '../notifications/notifications.service';
 import type { Role, UserWithProfile } from '../../types';
 import type { AuthRepository } from './auth.repository';
 
@@ -13,6 +14,8 @@ export interface AuthDeps {
   storage: Storage;
   hasher: PasswordHasher;
   signToken(payload: { sub: string; role: Role }): string;
+  /** E-mails de boas-vindas e de cadastro recebido. */
+  notifier?: Notifier;
 }
 
 export interface RegisterInput {
@@ -33,7 +36,7 @@ export interface AuthResult {
   user: UserWithProfile;
 }
 
-export const createAuthService = ({ db, authRepo, storage, hasher, signToken }: AuthDeps) => {
+export const createAuthService = ({ db, authRepo, storage, hasher, signToken, notifier = noopNotifier }: AuthDeps) => {
   // Hash fixo para comparar quando o e-mail não existe: o tempo de resposta não revela contas cadastradas.
   let dummyHash: Promise<string> | undefined;
   const getDummyHash = () => (dummyHash ??= hasher.hash(randomUUID()));
@@ -45,6 +48,7 @@ export const createAuthService = ({ db, authRepo, storage, hasher, signToken }: 
       if (await authRepo.emailExists(db.sql, input.email)) throw new AppError('EMAIL_TAKEN');
       const password_hash = await hasher.hash(input.password);
       const user = await authRepo.insertUser(db.sql, { ...input, password_hash, role: 'DONOR' });
+      notifier.notify({ type: 'donor.registered', userId: user.id });
       return issue({ ...user, ngo_profile: null });
     },
 
@@ -81,6 +85,7 @@ export const createAuthService = ({ db, authRepo, storage, hasher, signToken }: 
           });
           return { ...u, ngo_profile: profile };
         });
+        notifier.notify({ type: 'ngo.registered', userId: user.id });
         return issue(user);
       } catch (err) {
         await storage.remove('docs', [path]).catch(() => {});

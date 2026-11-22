@@ -3,6 +3,7 @@ import { AppError } from '../../core/errors';
 import type { AuthUser, Item, ItemInterest } from '../../types';
 import type { ItemEventsRepository } from '../items/item-events.repository';
 import type { ItemsRepository } from '../items/items.repository';
+import { noopNotifier, type Notifier } from '../notifications/notifications.service';
 import type { InterestedNgo, InterestsRepository } from './interests.repository';
 
 export interface InterestsDeps {
@@ -10,9 +11,11 @@ export interface InterestsDeps {
   itemsRepo: Pick<ItemsRepository, 'findById' | 'selectNgoIfAvailable'>;
   interestsRepo: InterestsRepository;
   eventsRepo: Pick<ItemEventsRepository, 'insert'>;
+  /** Avisa o doador do interesse e a ONG da escolha. */
+  notifier?: Notifier;
 }
 
-export const createInterestsService = ({ db, itemsRepo, interestsRepo, eventsRepo }: InterestsDeps) => ({
+export const createInterestsService = ({ db, itemsRepo, interestsRepo, eventsRepo, notifier = noopNotifier }: InterestsDeps) => ({
   /** Curtida de ONG ativa (o guard da rota já garantiu ATIVO). */
   async like(ngo: AuthUser, itemId: string): Promise<ItemInterest> {
     const created = await interestsRepo.insertIfAvailable(db.sql, {
@@ -21,7 +24,10 @@ export const createInterestsService = ({ db, itemsRepo, interestsRepo, eventsRep
       city: ngo.city,
       state: ngo.state,
     });
-    if (created) return created;
+    if (created) {
+      notifier.notify({ type: 'interest.created', itemId, ngoId: ngo.id });
+      return created;
+    }
 
     // Nada inserido: descobrir o motivo. A ONG não vê itens de fora no feed,
     // mas o itemId pode vir de qualquer lugar, então a região é checada de novo aqui.
@@ -49,7 +55,7 @@ export const createInterestsService = ({ db, itemsRepo, interestsRepo, eventsRep
 
   /** DISPONIVEL → EM_PROGRESSO. Uma ida ao banco no caminho feliz; leituras extras só para escolher o erro. */
   async selectNgo(donorId: string, itemId: string, ngoId: string): Promise<Item> {
-    return db.tx(async (tx) => {
+    const selected = await db.tx(async (tx) => {
       const item = await itemsRepo.selectNgoIfAvailable(tx, itemId, donorId, ngoId);
       if (item) {
         await eventsRepo.insert(tx, { itemId, from: 'DISPONIVEL', to: 'EM_PROGRESSO', actorId: donorId, ngoId });
@@ -63,6 +69,8 @@ export const createInterestsService = ({ db, itemsRepo, interestsRepo, eventsRep
       if (!(await interestsRepo.exists(tx, itemId, ngoId))) throw new AppError('NGO_NOT_INTERESTED');
       throw new AppError('NGO_NOT_ACTIVE');
     });
+    notifier.notify({ type: 'ngo.selected', itemId, ngoId });
+    return selected;
   },
 });
 

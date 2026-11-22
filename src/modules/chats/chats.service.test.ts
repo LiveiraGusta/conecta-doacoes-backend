@@ -37,6 +37,7 @@ const MSG: ChatMessage = {
 function setup(over: { itemsRepo?: Partial<ChatsDeps['itemsRepo']>; chatsRepo?: Partial<ChatsRepository> } = {}) {
   const published: RealtimeEvent[] = [];
   const eventsRepo = { insert: vi.fn(async () => {}) };
+  const notifier = { notify: vi.fn(), drain: async () => {} };
   const service = createChatsService({
     db: fakeDb(),
     itemsRepo: {
@@ -56,8 +57,9 @@ function setup(over: { itemsRepo?: Partial<ChatsDeps['itemsRepo']>; chatsRepo?: 
     } as ChatsRepository,
     eventsRepo,
     bus: { publish: (e) => published.push(e), subscribe: () => () => {}, subscribeUser: () => () => {} },
+    notifier,
   });
-  return { service, published, eventsRepo };
+  return { service, published, eventsRepo, notifier };
 }
 
 const notFound = { itemsRepo: { findById: async (): Promise<Item | null> => null } };
@@ -128,14 +130,22 @@ describe('chatsService.confirmReceipt', () => {
     expect(published[0]).toMatchObject({ type: 'item.status_changed', to: 'DOADO', completedAt: done.completed_at });
   });
 
+  it('agenda o e-mail de doação concluída para o doador', async () => {
+    const done = item({ status: 'DOADO', completed_at: new Date() });
+    const { service, notifier } = setup({ itemsRepo: { confirmIfInProgress: async () => done } });
+    await service.confirmReceipt(NGO, 'i1');
+    expect(notifier.notify).toHaveBeenCalledWith({ type: 'donation.completed', itemId: 'i1', ngoId: NGO.id });
+  });
+
   it.each([
     ['ITEM_NOT_FOUND', 404, NGO, notFound],
     ['FORBIDDEN', 403, OTHER_NGO, {}],
     ['ITEM_NOT_IN_PROGRESS', 409, NGO, { itemsRepo: { findById: async (): Promise<Item | null> => item({ status: 'DOADO' }) } }],
   ] as const)('%s', async (code, status, user, over) => {
-    const { service, published } = setup(over);
+    const { service, published, notifier } = setup(over);
     await expect(service.confirmReceipt(user, 'i1')).rejects.toMatchObject({ code, status });
     expect(published).toEqual([]);
+    expect(notifier.notify).not.toHaveBeenCalled();
   });
 });
 
@@ -152,11 +162,39 @@ describe('chatsService.cancel', () => {
     expect(published[0]).toMatchObject({ type: 'item.status_changed', from: 'EM_PROGRESSO', to: 'DISPONIVEL', actorRole: 'NGO' });
   });
 
+  it('cancelado pela ONG: e-mail para o doador, com o motivo', async () => {
+    const back = { ...item({ status: 'DISPONIVEL', selected_ngo_id: null }), previous_ngo_id: NGO.id };
+    const { service, notifier } = setup({ itemsRepo: { cancelIfInProgress: async () => back } });
+    await service.cancel(NGO, 'i1', 'Não consigo buscar');
+    expect(notifier.notify).toHaveBeenCalledWith({
+      type: 'negotiation.cancelled',
+      itemId: 'i1',
+      actorId: NGO.id,
+      counterpartId: DONOR.id,
+      reason: 'Não consigo buscar',
+    });
+  });
+
+  it('cancelado pelo doador: e-mail para a ONG que negociava', async () => {
+    const back = { ...item({ status: 'DISPONIVEL', selected_ngo_id: null }), previous_ngo_id: NGO.id };
+    const { service, notifier } = setup({ itemsRepo: { cancelIfInProgress: async () => back } });
+    await service.cancel(DONOR, 'i1');
+    expect(notifier.notify).toHaveBeenCalledWith({
+      type: 'negotiation.cancelled',
+      itemId: 'i1',
+      actorId: DONOR.id,
+      counterpartId: NGO.id,
+      reason: null,
+    });
+  });
+
   it.each([
     ['ITEM_NOT_FOUND', 404, DONOR, notFound],
     ['FORBIDDEN', 403, OTHER_NGO, {}],
     ['ITEM_NOT_IN_PROGRESS', 409, DONOR, disponivel],
   ] as const)('%s', async (code, status, user, over) => {
-    await expect(setup(over).service.cancel(user, 'i1')).rejects.toMatchObject({ code, status });
+    const { service, notifier } = setup(over);
+    await expect(service.cancel(user, 'i1')).rejects.toMatchObject({ code, status });
+    expect(notifier.notify).not.toHaveBeenCalled();
   });
 });

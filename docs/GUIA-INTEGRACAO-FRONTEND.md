@@ -234,7 +234,7 @@ O e-mail é normalizado pela API (espaços removidos e minúsculas), então não
    - `400 INVALID_RESET_TOKEN`: link inválido, expirado ou já usado. Ofereça "Pedir um novo link".
    - `400 VALIDATION_ERROR`: senha fora da regra (`details` no campo `new_password`).
 
-> Em dev sem `RESEND_API_KEY`, o e-mail não é enviado: o link aparece no **log do backend**.
+> Em dev sem `BREVO_API_KEY` nem `RESEND_API_KEY`, o e-mail não é enviado: o link aparece no **log do backend**.
 
 ### F4. ONG: análise, rejeição e reenvio do documento
 
@@ -540,6 +540,19 @@ Ao reconectar, busque o que se perdeu em cada sala aberta com `GET /chats/{itemI
 - **Esperar evento de aprovação da ONG.** Não existe: refaça o `GET /auth/me` ao focar o app.
 - **Usar o `user_id` na moderação.** A rota de status da ONG usa o `ngo_profile_id`.
 - **Nome do doador no feed.** Vem abreviado de propósito ("Marina S.").
+- **Mudar uma rota que aparece nos e-mails.** O backend manda e-mails com links para estas telas (sempre `APP_URL` + caminho). Se alguma mudar, avise o backend ([notifications.templates.ts](../src/modules/notifications/notifications.templates.ts)):
+
+| Caminho | E-mail que usa |
+| --- | --- |
+| `/redefinir-senha?token=…` | Redefinição de senha |
+| `/feed` | Cadastro recebido, ONG aprovada, senha alterada, negociação cancelada (para a ONG) |
+| `/donations` | Negociação cancelada (para o doador) |
+| `/donations/new` | Boas-vindas do doador, doação concluída |
+| `/donations/:itemId/interests` | Nova ONG interessada |
+| `/chats/:itemId` | Sua ONG foi escolhida |
+| `/profile` | Cadastro não aprovado (reenviar o documento) |
+| `/admin/ngos` | Nova ONG para análise, documento reenviado |
+| `/admin/reports/:reportId` | Nova denúncia |
 
 ---
 
@@ -555,5 +568,5 @@ Ao reconectar, busque o que se perdeu em cada sala aberta com `GET /chats/{itemI
 | ONG em análise | `ong.pendente@demo.conectadoacoes.local` |
 | Admin | `ADMIN_EMAIL` / `ADMIN_PASSWORD` do `.env` do backend |
 
-3. Esses e-mails são fictícios: a recuperação de senha deles não chega por e-mail. Pegue o link no log do backend.
+3. Esses e-mails são fictícios: nenhum e-mail chega para eles (recuperação de senha nem notificações). Sem chave de provedor, pegue o link no log do backend; com chave, o provedor recusa o envio e o erro também vai para o log.
 4. Para inspecionar ou testar uma rota isolada, use o Swagger em `http://localhost:3333/docs`.

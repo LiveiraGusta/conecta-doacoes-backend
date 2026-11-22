@@ -31,6 +31,7 @@ function setup(over: {
   interestsRepo?: Partial<InterestsDeps['interestsRepo']>;
 } = {}) {
   const eventsRepo = { insert: vi.fn(async () => {}) };
+  const notifier = { notify: vi.fn(), drain: async () => {} };
   const service = createInterestsService({
     db: fakeDb(),
     itemsRepo: { findById: async (): Promise<Item | null> => item(), selectNgoIfAvailable: async () => null, ...over.itemsRepo },
@@ -42,15 +43,17 @@ function setup(over: {
       ...over.interestsRepo,
     } as InterestsDeps['interestsRepo'],
     eventsRepo,
+    notifier,
   });
-  return { service, eventsRepo };
+  return { service, eventsRepo, notifier };
 }
 
 describe('interestsService.like', () => {
   it('devolve a curtida criada', async () => {
     const created = { id: 'x', item_id: ITEM, ngo_id: NGO, created_at: new Date() };
-    const { service } = setup({ interestsRepo: { insertIfAvailable: async () => created } });
+    const { service, notifier } = setup({ interestsRepo: { insertIfAvailable: async () => created } });
     await expect(service.like(ngo, ITEM)).resolves.toBe(created);
+    expect(notifier.notify).toHaveBeenCalledWith({ type: 'interest.created', itemId: ITEM, ngoId: NGO });
   });
 
   it.each([
@@ -59,8 +62,9 @@ describe('interestsService.like', () => {
     ['ALREADY_INTERESTED', 409, { interestsRepo: { exists: async () => true } }],
     ['ITEM_NOT_AVAILABLE', 409, { itemsRepo: { findById: async (): Promise<Item | null> => item({ status: 'EM_PROGRESSO' }) } }],
   ] as const)('%s', async (code, status, over) => {
-    const { service } = setup(over as Parameters<typeof setup>[0]);
+    const { service, notifier } = setup(over as Parameters<typeof setup>[0]);
     await expect(service.like(ngo, ITEM)).rejects.toMatchObject({ code, status });
+    expect(notifier.notify).not.toHaveBeenCalled();
   });
 });
 
@@ -96,8 +100,9 @@ describe('interestsService.listInterested', () => {
 describe('interestsService.selectNgo', () => {
   it('caminho feliz: grava o evento DISPONIVEL → EM_PROGRESSO com a ONG', async () => {
     const selected = item({ status: 'EM_PROGRESSO', selected_ngo_id: NGO });
-    const { service, eventsRepo } = setup({ itemsRepo: { selectNgoIfAvailable: async () => selected } });
+    const { service, eventsRepo, notifier } = setup({ itemsRepo: { selectNgoIfAvailable: async () => selected } });
     await expect(service.selectNgo(DONOR, ITEM, NGO)).resolves.toBe(selected);
+    expect(notifier.notify).toHaveBeenCalledWith({ type: 'ngo.selected', itemId: ITEM, ngoId: NGO });
     expect(eventsRepo.insert).toHaveBeenCalledWith(expect.anything(), {
       itemId: ITEM,
       from: 'DISPONIVEL',
@@ -114,8 +119,9 @@ describe('interestsService.selectNgo', () => {
     ['NGO_NOT_INTERESTED', 409, {}],
     ['NGO_NOT_ACTIVE', 409, { interestsRepo: { exists: async () => true } }],
   ] as const)('%s quando o UPDATE não afeta linhas', async (code, status, over) => {
-    const { service, eventsRepo } = setup(over as Parameters<typeof setup>[0]);
+    const { service, eventsRepo, notifier } = setup(over as Parameters<typeof setup>[0]);
     await expect(service.selectNgo(DONOR, ITEM, NGO)).rejects.toMatchObject({ code, status });
     expect(eventsRepo.insert).not.toHaveBeenCalled();
+    expect(notifier.notify).not.toHaveBeenCalled();
   });
 });

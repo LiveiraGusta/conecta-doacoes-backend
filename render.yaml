@@ -41,9 +41,11 @@ services:
       # Opcional: ex.: .seudominio.com.br. Vazio = cookie só no host da API (já funciona com app.<dom> + api.<dom>).
       - key: COOKIE_DOMAIN
         sync: false
-      - key: RESEND_API_KEY # recuperação de senha; obrigatória em produção
+      - key: BREVO_API_KEY # e-mails (senha e notificações); esta ou RESEND_API_KEY é obrigatória em produção
         sync: false
-      - key: EMAIL_FROM # remetente de um domínio verificado no Resend
+      - key: RESEND_API_KEY # alternativa ao Brevo (exige domínio verificado no Resend)
         sync: false
-      - key: APP_URL # frontend (https://app.seudominio.com.br); link do e-mail de redefinição; precisa estar no CORS_ORIGIN
+      - key: EMAIL_FROM # remetente verificado no Brevo (ou de um domínio verificado no Resend)
+        sync: false
+      - key: APP_URL # frontend (https://app.seudominio.com.br); base dos links dos e-mails; precisa estar no CORS_ORIGIN
         sync: false
