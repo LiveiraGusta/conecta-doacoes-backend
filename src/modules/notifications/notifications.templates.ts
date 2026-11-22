@@ -200,6 +200,47 @@ export const templates = {
       cta: { label: 'Ver a denúncia', url: l.report(p.reportId) },
     }),
 
+  itemReported: (
+    p: { adminName: string; reporterName: string; itemTitle: string; category: string; reportId: string; hidden: boolean },
+    l: Links,
+  ) =>
+    render({
+      subject: p.hidden ? `Anúncio fora do ar por denúncias: "${p.itemTitle}"` : `Anúncio denunciado: "${p.itemTitle}"`,
+      greeting: hi(p.adminName),
+      paragraphs: [
+        `${p.reporterName} denunciou o anúncio "${p.itemTitle}". Motivo: ${p.category}.`,
+        p.hidden
+          ? 'O anúncio atingiu o limite de denúncias e saiu do ar sozinho. Ele fica oculto até você remover ou manter.'
+          : 'O anúncio continua no ar. Decida se ele deve ser removido ou mantido.',
+      ],
+      cta: { label: 'Ver a denúncia', url: l.report(p.reportId) },
+    }),
+
+  itemRemoved: (p: { name: string; itemTitle: string; reason: string; cancelledNegotiation: boolean }, l: Links) =>
+    render({
+      subject: `Anúncio removido: "${p.itemTitle}"`,
+      greeting: hi(p.name),
+      paragraphs: [
+        `A equipe de moderação removeu o seu anúncio "${p.itemTitle}" por não seguir as regras do ${BRAND}.`,
+        ...(p.cancelledNegotiation ? ['A negociação em andamento foi cancelada e a conversa, encerrada.'] : []),
+        'Motivo informado pela equipe:',
+      ],
+      quote: p.reason,
+      cta: { label: 'Ver minhas doações', url: l.donations },
+      footnote: 'Se achar que foi um engano, responda a este e-mail.',
+    }),
+
+  negotiationEndedByModeration: (p: { ngoName: string; itemTitle: string }, l: Links) =>
+    render({
+      subject: `Negociação encerrada: "${p.itemTitle}"`,
+      greeting: hi(p.ngoName),
+      paragraphs: [
+        `O anúncio "${p.itemTitle}" foi removido pela equipe de moderação, e a negociação com a sua ONG foi cancelada.`,
+        'A conversa foi encerrada. Vocês podem continuar demonstrando interesse em outras doações.',
+      ],
+      cta: { label: 'Ver as doações', url: l.feed },
+    }),
+
   accountDeleted: (p: { name: string }) =>
     render({
       subject: 'Conta excluída',
