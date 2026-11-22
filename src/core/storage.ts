@@ -9,6 +9,8 @@ export interface Storage {
   remove(bucket: Bucket, paths: string[]): Promise<void>;
   /** URL pública de um arquivo do bucket `items`. */
   publicUrl(path: string): string;
+  /** Inverso de publicUrl: o caminho no bucket `items`, ou null se a URL não for dele. */
+  pathFromPublicUrl(url: string): string | null;
   /** URL assinada de um arquivo do bucket `docs`. */
   signedUrl(path: string, expiresInSec: number): Promise<string>;
 }
@@ -31,6 +33,11 @@ export function createSupabaseStorage(): Storage {
     },
     publicUrl(path) {
       return client.storage.from(env.STORAGE_BUCKET_ITEMS).getPublicUrl(path).data.publicUrl;
+    },
+    pathFromPublicUrl(url) {
+      const marker = `/object/public/${env.STORAGE_BUCKET_ITEMS}/`;
+      const i = url.indexOf(marker);
+      return i === -1 ? null : decodeURIComponent(url.slice(i + marker.length));
     },
     async signedUrl(path, expiresInSec) {
       const { data, error } = await client.storage.from(env.STORAGE_BUCKET_DOCS).createSignedUrl(path, expiresInSec);

@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { normalizeCnpj } from '../../core/cnpj';
-import { NgoStatus, Role, text, UF } from '../../core/dto';
+import { Category, NgoStatus, Role, text, ThemeColor, ThemeMode, UF } from '../../core/dto';
 import { PASSWORD_RULE } from '../../core/passwords';
-import type { UserWithProfile } from '../../types';
+import type { NgoProfile, UserPreferences, UserWithProfile } from '../../types';
 
 // ── Entrada ──
 export const Email = z.string().trim().toLowerCase().max(255).pipe(z.email());
@@ -56,7 +56,27 @@ export const LoginBody = z.object({
 });
 export type LoginBody = z.infer<typeof LoginBody>;
 
+export const ForgotPasswordBody = z.object({ email: Email });
+export type ForgotPasswordBody = z.infer<typeof ForgotPasswordBody>;
+
+export const ResetPasswordBody = z.object({
+  token: z.string().trim().min(1).max(200),
+  new_password: Password,
+});
+export type ResetPasswordBody = z.infer<typeof ResetPasswordBody>;
+
 // ── Saída ──
+export const AddressDto = z
+  .object({
+    cep: z.string(),
+    street: z.string(),
+    number: z.string(),
+    complement: z.string().nullable(),
+    neighborhood: z.string(),
+  })
+  .describe('Address');
+export type AddressDto = z.infer<typeof AddressDto>;
+
 export const NgoProfileDto = z
   .object({
     id: z.uuid(),
@@ -64,8 +84,32 @@ export const NgoProfileDto = z
     website: z.string().nullable(),
     status: NgoStatus,
     rejection_reason: z.string().nullable(),
+    banner_url: z.string().nullable(),
+    phone: z.string().nullable(),
+    instagram: z.string().nullable(),
+    accepted_categories: z.array(Category),
+    address: AddressDto.nullable(),
   })
   .describe('NgoProfile');
+
+export const PreferencesDto = z
+  .object({ theme_color: ThemeColor, theme_mode: ThemeMode, show_donations: z.boolean() })
+  .describe('Preferences');
+export type PreferencesDto = z.infer<typeof PreferencesDto>;
+
+/** Usuário sem linha em user_preferences usa estes valores. */
+export const DEFAULT_PREFERENCES: UserPreferences = { theme_color: 'AZUL', theme_mode: 'SYSTEM', show_donations: false };
+
+export const toPreferencesDto = (p: UserPreferences | null | undefined): PreferencesDto => ({
+  theme_color: p?.theme_color ?? DEFAULT_PREFERENCES.theme_color,
+  theme_mode: p?.theme_mode ?? DEFAULT_PREFERENCES.theme_mode,
+  show_donations: p?.show_donations ?? DEFAULT_PREFERENCES.show_donations,
+});
+
+export const toAddressDto = (np: NgoProfile): AddressDto | null =>
+  np.cep && np.street && np.number && np.neighborhood
+    ? { cep: np.cep, street: np.street, number: np.number, complement: np.complement ?? null, neighborhood: np.neighborhood }
+    : null;
 
 export const UserDto = z
   .object({
@@ -75,12 +119,16 @@ export const UserDto = z
     role: Role,
     city: z.string(),
     state: UF,
+    bio: z.string().nullable(),
+    avatar_url: z.string().nullable(),
+    preferences: PreferencesDto,
     ngo_profile: NgoProfileDto.optional(),
   })
   .describe('User');
 export type UserDto = z.infer<typeof UserDto>;
 
-export const AuthResponseDto = z.object({ token: z.string(), user: UserDto }).describe('AuthResponse');
+/** O token não vai no corpo: ele sai só no cookie httpOnly `cd_session` (ADR-13). */
+export const AuthResponseDto = z.object({ user: UserDto }).describe('AuthResponse');
 export type AuthResponseDto = z.infer<typeof AuthResponseDto>;
 
 export const MeResponseDto = z.object({ user: UserDto });
@@ -93,6 +141,9 @@ export const toUserDto = (u: UserWithProfile): UserDto => ({
   role: u.role,
   city: u.city,
   state: u.state as UserDto['state'],
+  bio: u.bio ?? null,
+  avatar_url: u.avatar_url ?? null,
+  preferences: toPreferencesDto(u.preferences),
   ...(u.role === 'NGO' && u.ngo_profile
     ? {
         ngo_profile: {
@@ -101,12 +152,14 @@ export const toUserDto = (u: UserWithProfile): UserDto => ({
           website: u.ngo_profile.website,
           status: u.ngo_profile.status,
           rejection_reason: u.ngo_profile.rejection_reason,
+          banner_url: u.ngo_profile.banner_url ?? null,
+          phone: u.ngo_profile.phone ?? null,
+          instagram: u.ngo_profile.instagram ?? null,
+          accepted_categories: u.ngo_profile.accepted_categories ?? [],
+          address: toAddressDto(u.ngo_profile),
         },
       }
     : {}),
 });
 
-export const toAuthResponseDto = (r: { token: string; user: UserWithProfile }): AuthResponseDto => ({
-  token: r.token,
-  user: toUserDto(r.user),
-});
+export const toAuthResponseDto = (r: { user: UserWithProfile }): AuthResponseDto => ({ user: toUserDto(r.user) });

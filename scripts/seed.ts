@@ -56,10 +56,10 @@ const DEMO = {
   ngoPending: { name: 'Instituto Novo Começo', email: 'ong.pendente@demo.conectadoacoes.local', cnpj: '45.997.418/0001-53' },
 };
 
-const DEMO_ITEMS: { title: string; description: string; category: Category; color: string }[] = [
-  { title: 'Casaco infantil tamanho 6', description: 'Pouco usado, forrado, ideal para o inverno.', category: 'ROUPAS', color: '#2563eb' },
+const DEMO_ITEMS: { title: string; description: string; notes?: string; category: Category; color: string }[] = [
+  { title: 'Casaco infantil tamanho 6', description: 'Pouco usado, forrado, ideal para o inverno.', notes: 'Retirada em Bela Vista, de segunda a sexta depois das 18h.', category: 'ROUPAS', color: '#2563eb' },
   { title: 'Kit de livros didáticos 5º ano', description: 'Português, matemática e ciências, sem rasuras.', category: 'LIVROS', color: '#16a34a' },
-  { title: 'Bicicleta aro 20', description: 'Pneus novos, precisa só de ajuste no freio.', category: 'BRINQUEDOS', color: '#e11d48' },
+  { title: 'Bicicleta aro 20', description: 'Pneus novos, precisa só de ajuste no freio.', notes: 'Posso levar até a ONG se for na zona central.', category: 'BRINQUEDOS', color: '#e11d48' },
   { title: 'Cesta básica fechada', description: 'Arroz, feijão, óleo, açúcar e café. Validade até 2027.', category: 'ALIMENTOS', color: '#d97706' },
   { title: 'Lote de roupas de bebê', description: 'Bodies e macacões de 0 a 6 meses.', category: 'ROUPAS', color: '#7c3aed' },
   { title: 'Jogos de tabuleiro', description: 'Três jogos completos, caixas um pouco gastas.', category: 'BRINQUEDOS', color: '#0891b2' },
@@ -96,6 +96,15 @@ async function seedDemoData(db: Db, storage: Storage) {
   const ngoActive = (await auth.registerNgo({ ...DEMO.ngoActive, ...place, password: DEMO_PASSWORD, website: 'https://ongsalvadora.org.br' }, [pdf])).user;
   await auth.registerNgo({ ...DEMO.ngoPending, ...place, password: DEMO_PASSWORD }, [pdf]);
   await admin.updateNgoStatus(ngoActive.ngo_profile!.id, 'ATIVO');
+  // Página pessoal da demo: a ONG com contato, endereço e categorias; a doadora com descrição e doações visíveis.
+  await db.sql`
+    UPDATE ngo_profiles SET phone = '11987654321', instagram = 'ongsalvadora',
+      accepted_categories = ARRAY['ROUPAS', 'BRINQUEDOS', 'LIVROS']::VARCHAR(20)[],
+      cep = '01310100', street = 'Av. Paulista', number = '1000', complement = 'Sala 12', neighborhood = 'Bela Vista'
+    WHERE user_id = ${ngoActive.id}`;
+  await db.sql`UPDATE users SET bio = 'Atendemos 200 famílias na região central de São Paulo.' WHERE id = ${ngoActive.id}`;
+  await db.sql`UPDATE users SET bio = 'Doo o que não uso mais para quem precisa.' WHERE id = ${donor.id}`;
+  await db.sql`INSERT INTO user_preferences (user_id, show_donations) VALUES (${donor.id}, TRUE)`;
 
   const donorCtx: AuthUser = { id: donor.id, role: 'DONOR', ...place, ngoStatus: null };
   for (const [i, it] of DEMO_ITEMS.entries()) {

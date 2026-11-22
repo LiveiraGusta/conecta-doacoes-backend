@@ -1,29 +1,40 @@
 import type { Queryable } from '../../core/db';
-import type { AuthUser, NgoProfile, NgoStatus, Role, User, UserWithProfile } from '../../types';
+import type { AuthContext, NgoProfile, NgoStatus, Role, User, UserWithProfile } from '../../types';
 
 const userWithProfile = (q: Queryable) => q`
-  SELECT u.*, (SELECT to_jsonb(np) FROM ngo_profiles np WHERE np.user_id = u.id) AS ngo_profile
+  SELECT u.*,
+    (SELECT to_jsonb(np) FROM ngo_profiles np WHERE np.user_id = u.id) AS ngo_profile,
+    (SELECT to_jsonb(up) - 'user_id' - 'updated_at' FROM user_preferences up WHERE up.user_id = u.id) AS preferences
   FROM users u`;
 
 export const authRepository = {
-  /** Contexto mínimo do usuário para o hook de autenticação. */
-  async findAuthContext(q: Queryable, userId: string): Promise<AuthUser | null> {
-    const [row] = await q<{ id: string; role: Role; city: string; state: string; ngo_status: NgoStatus | null }[]>`
-      SELECT u.id, u.role, u.city, u.state, np.status AS ngo_status
+  /** Contexto mínimo do usuário para o hook de autenticação. Conta excluída = inexistente. */
+  async findAuthContext(q: Queryable, userId: string): Promise<AuthContext | null> {
+    const [row] = await q<
+      { id: string; role: Role; city: string; state: string; ngo_status: NgoStatus | null; password_changed_at: Date | null }[]
+    >`
+      SELECT u.id, u.role, u.city, u.state, np.status AS ngo_status, u.password_changed_at
       FROM users u
       LEFT JOIN ngo_profiles np ON np.user_id = u.id
-      WHERE u.id = ${userId}`;
+      WHERE u.id = ${userId} AND u.deleted_at IS NULL`;
     if (!row) return null;
-    return { id: row.id, role: row.role, city: row.city, state: row.state, ngoStatus: row.ngo_status };
+    return {
+      id: row.id,
+      role: row.role,
+      city: row.city,
+      state: row.state,
+      ngoStatus: row.ngo_status,
+      passwordChangedAt: row.password_changed_at,
+    };
   },
 
   async findById(q: Queryable, id: string): Promise<UserWithProfile | null> {
-    const [row] = await q<UserWithProfile[]>`${userWithProfile(q)} WHERE u.id = ${id}`;
+    const [row] = await q<UserWithProfile[]>`${userWithProfile(q)} WHERE u.id = ${id} AND u.deleted_at IS NULL`;
     return row ?? null;
   },
 
   async findByEmail(q: Queryable, email: string): Promise<UserWithProfile | null> {
-    const [row] = await q<UserWithProfile[]>`${userWithProfile(q)} WHERE u.email = ${email}`;
+    const [row] = await q<UserWithProfile[]>`${userWithProfile(q)} WHERE u.email = ${email} AND u.deleted_at IS NULL`;
     return row ?? null;
   },
 
@@ -47,6 +58,13 @@ export const authRepository = {
               ${u.role}, ${u.city}, ${u.state})
       RETURNING *`;
     return row!;
+  },
+
+  /** Grava a senha nova e marca a troca: tokens JWT emitidos antes passam a ser recusados. */
+  async setPassword(q: Queryable, userId: string, passwordHash: string): Promise<void> {
+    await q`
+      UPDATE users SET password_hash = ${passwordHash}, password_changed_at = NOW(), updated_at = NOW()
+      WHERE id = ${userId}`;
   },
 
   async insertNgoProfile(

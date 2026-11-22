@@ -18,6 +18,7 @@ export const PublishItemFields = z
   .object({
     title: text(3, 255),
     description: optionalText(2000),
+    notes: optionalText(1000),
     category: Category,
     city: optionalText(100).pipe(z.string().min(2).optional()),
     state: z.preprocess((v) => (v === '' ? undefined : v), UF.optional()),
@@ -42,6 +43,14 @@ export const MyItemsQuery = PaginationQuery.extend({
 export type MyItemsQuery = z.infer<typeof MyItemsQuery>;
 
 // ── Saída ──
+export const ModerationStatus = z.enum(['VISIVEL', 'OCULTO', 'REMOVIDO']);
+
+/** Moderação do anúncio. O motivo só vem para o doador (null para os demais). */
+const moderationFields = {
+  moderation_status: ModerationStatus,
+  moderation_reason: z.string().nullable(),
+};
+
 export const PhotoDto = z.object({ id: z.uuid(), photo_url: z.string() }).describe('Photo');
 
 export const ItemDto = z
@@ -50,6 +59,7 @@ export const ItemDto = z
     donor_id: z.uuid(),
     title: z.string(),
     description: z.string().nullable(),
+    notes: z.string().nullable(),
     category: Category,
     city: z.string(),
     state: z.string(),
@@ -58,11 +68,14 @@ export const ItemDto = z
     photos: z.array(PhotoDto),
     created_at: isoDate(),
     completed_at: isoDate().nullable(),
+    ...moderationFields,
   })
   .describe('Item');
 export type ItemDto = z.infer<typeof ItemDto>;
 
-export const DonorDto = z.object({ id: z.uuid(), name: z.string() }).describe('Donor');
+export const DonorDto = z
+  .object({ id: z.uuid(), name: z.string(), avatar_url: z.string().nullable() })
+  .describe('Donor');
 
 export const FeedItemDto = z
   .object({
@@ -79,6 +92,7 @@ export const FeedItemDto = z
     created_at: isoDate(),
     donor: DonorDto,
     photos: z.array(z.string()),
+    ...moderationFields,
   })
   .describe('FeedItem');
 export type FeedItemDto = z.infer<typeof FeedItemDto>;
@@ -115,6 +129,7 @@ const baseItem = (item: Item, photos: { id: string; photo_url: string }[]) => ({
   donor_id: item.donor_id,
   title: item.title,
   description: item.description,
+  notes: item.notes,
   category: item.category,
   city: item.city,
   state: item.state,
@@ -123,6 +138,8 @@ const baseItem = (item: Item, photos: { id: string; photo_url: string }[]) => ({
   photos,
   created_at: toIso(item.created_at),
   completed_at: toIsoOrNull(item.completed_at),
+  moderation_status: item.moderation_status,
+  moderation_reason: item.moderation_reason,
 });
 
 export const toItemDto = (item: Item & { photos: ItemPhoto[] }): ItemDto =>
@@ -143,8 +160,10 @@ export const toFeedItemDto = (v: ItemView & ViewerContext): FeedItemDto => ({
   interests_count: v.interests_count,
   is_selected: v.is_selected,
   created_at: toIso(v.created_at),
-  donor: { id: v.donor_id, name: abbreviateName(v.donor_name) },
+  donor: { id: v.donor_id, name: abbreviateName(v.donor_name), avatar_url: v.donor_avatar_url ?? null },
   photos: v.photos,
+  moderation_status: v.moderation_status,
+  moderation_reason: v.moderation_reason,
 });
 
 export const toItemListDto = (page: { total: number; rows: (ItemView & ViewerContext)[] }): ItemListDto => ({
@@ -157,8 +176,53 @@ export const toItemDetailDto = (v: ItemView & ViewerContext): ItemDetailDto => (
     v,
     v.photo_ids.map((id, i) => ({ id, photo_url: v.photos[i]! })),
   ),
-  donor: { id: v.donor_id, name: abbreviateName(v.donor_name) },
+  donor: { id: v.donor_id, name: abbreviateName(v.donor_name), avatar_url: v.donor_avatar_url ?? null },
   has_user_interest: v.has_user_interest,
   interests_count: v.interests_count,
   is_selected: v.is_selected,
+});
+
+// ── Visitante (rotas /public/items) ──
+/** Item para quem não está logado: sem doador, sem observações e sem contagem de interessadas. */
+export const PublicItemDto = z
+  .object({
+    id: z.uuid(),
+    title: z.string(),
+    description: z.string().nullable(),
+    category: Category,
+    city: z.string(),
+    state: z.string(),
+    status: z.enum(['DISPONIVEL', 'EM_PROGRESSO']),
+    created_at: isoDate(),
+    /** URLs das 3 fotos, na ordem de envio (a primeira é a capa). */
+    photos: z.array(z.string()),
+  })
+  .strict()
+  .describe('PublicItem');
+export type PublicItemDto = z.infer<typeof PublicItemDto>;
+
+export const PublicItemListDto = z
+  .object({ total: z.number().int().min(0), data: z.array(PublicItemDto) })
+  .strict()
+  .describe('PublicItemList');
+export type PublicItemListDto = z.infer<typeof PublicItemListDto>;
+
+export const PublicFeedQuery = FeedQuery;
+export type PublicFeedQuery = z.infer<typeof PublicFeedQuery>;
+
+export const toPublicItemDto = (v: ItemView): PublicItemDto => ({
+  id: v.id,
+  title: v.title,
+  description: v.description,
+  category: v.category,
+  city: v.city,
+  state: v.state,
+  status: v.status as PublicItemDto['status'],
+  created_at: toIso(v.created_at),
+  photos: v.photos,
+});
+
+export const toPublicItemListDto = (page: { total: number; rows: ItemView[] }): PublicItemListDto => ({
+  total: page.total,
+  data: page.rows.map(toPublicItemDto),
 });

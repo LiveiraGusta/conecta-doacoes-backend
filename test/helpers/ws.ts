@@ -17,8 +17,22 @@ export interface TestWs {
 const matches = (m: Msg, match?: Partial<Msg> | ((m: Msg) => boolean)) =>
   !match ? true : typeof match === 'function' ? match(m) : Object.entries(match).every(([k, v]) => m[k] === v);
 
-export async function openWs(app: FastifyInstance, path = '/api/v1/chats/ws'): Promise<TestWs> {
-  const ws = await app.injectWS(path);
+export interface OpenWsOptions {
+  /** Cabeçalho `cookie` do handshake (use `sessionCookie(token)`). Sem ele, a conexão fecha com 4401. */
+  cookie?: string;
+  /** Origin do handshake. Padrão: a origem do frontend liberada no .env.test. `null` = sem Origin. */
+  origin?: string | null;
+  path?: string;
+}
+
+export const TEST_ORIGIN = 'http://localhost:5173';
+
+export async function openWs(app: FastifyInstance, opts: OpenWsOptions = {}): Promise<TestWs> {
+  const origin = opts.origin === undefined ? TEST_ORIGIN : opts.origin;
+  const headers: Record<string, string> = {};
+  if (origin) headers.origin = origin;
+  if (opts.cookie) headers.cookie = opts.cookie;
+  const ws = await app.injectWS(opts.path ?? '/api/v1/chats/ws', { headers });
   const inbox: Msg[] = [];
   const consumed = new Set<Msg>();
   let waiters: (() => void)[] = [];

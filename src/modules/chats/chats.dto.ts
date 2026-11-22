@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { isoDate, optionalText, PaginationQuery, text, toIso, toIsoOrNull } from '../../core/dto';
-import type { RealtimeEvent } from '../../core/realtime';
+import type { RoomEvent } from '../../core/realtime';
 import type { ChatMessage, ChatSummary, Counterpart, Item, Role } from '../../types';
 
 // ── Entrada ──
@@ -25,7 +25,9 @@ export type CancelBody = z.infer<typeof CancelBody>;
 // ── Saída ──
 const PartyRole = z.enum(['DONOR', 'NGO']);
 
-export const CounterpartDto = z.object({ id: z.uuid(), name: z.string(), role: PartyRole }).describe('Counterpart');
+export const CounterpartDto = z
+  .object({ id: z.uuid(), name: z.string(), role: PartyRole, avatar_url: z.string().nullable() })
+  .describe('Counterpart');
 export type CounterpartDto = z.infer<typeof CounterpartDto>;
 
 export const MessageDto = z
@@ -50,8 +52,14 @@ export const ChatSummaryDto = z
     last_message: z
       .object({ message: z.string(), sender_id: z.uuid(), created_at: isoDate() })
       .nullable(),
+    unread_count: z.number().int().min(0),
   })
   .describe('ChatSummary');
+
+export const UnreadSummaryDto = z
+  .object({ unread_messages: z.number().int().min(0), unread_chats: z.number().int().min(0) })
+  .describe('UnreadSummary');
+export type UnreadSummaryDto = z.infer<typeof UnreadSummaryDto>;
 
 export const ChatListDto = z.object({ total: z.number().int().min(0), data: z.array(ChatSummaryDto) });
 export type ChatListDto = z.infer<typeof ChatListDto>;
@@ -106,11 +114,17 @@ export const toChatListDto = (page: { total: number; rows: ChatSummary[] }): Cha
     item_title: r.item_title,
     item_photo: r.item_photo,
     item_status: r.item_status,
-    counterpart: { id: r.counterpart_id, name: r.counterpart_name, role: party(r.counterpart_role) },
+    counterpart: {
+      id: r.counterpart_id,
+      name: r.counterpart_name,
+      role: party(r.counterpart_role),
+      avatar_url: r.counterpart_avatar_url ?? null,
+    },
     last_message:
       r.last_message !== null && r.last_sender_id && r.last_created_at
         ? { message: r.last_message, sender_id: r.last_sender_id, created_at: toIso(r.last_created_at) }
         : null,
+    unread_count: r.unread_count,
   })),
 });
 
@@ -122,7 +136,12 @@ export const toChatRoomDto = (r: { item: Item; counterpart: Counterpart; message
     donor_id: r.item.donor_id,
     selected_ngo_id: r.item.selected_ngo_id,
   },
-  counterpart: { id: r.counterpart.id, name: r.counterpart.name, role: party(r.counterpart.role) },
+  counterpart: {
+    id: r.counterpart.id,
+    name: r.counterpart.name,
+    role: party(r.counterpart.role),
+    avatar_url: r.counterpart.avatar_url ?? null,
+  },
   messages: r.messages.map(toMessageDto),
 });
 
@@ -141,8 +160,8 @@ export const toCancelResultDto = (r: { item: Item; cancelledBy: Role }): CancelR
 });
 
 // ── WebSocket: mensagens no fio ──
+// A autenticação é pelo cookie no handshake (ADR-13): não existe mais a mensagem {type:'auth'}.
 export const WsClientMessage = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('auth'), token: z.string().min(1) }),
   z.object({ type: z.literal('subscribe'), item_id: z.uuid() }),
   z.object({ type: z.literal('unsubscribe'), item_id: z.uuid() }),
   z.object({ type: z.literal('ping') }),
@@ -156,17 +175,19 @@ export type WsServerMessage =
   | { type: 'pong' }
   | { type: 'error'; error: string; message: string; item_id?: string }
   | { type: 'message.created'; item_id: string; message: MessageDto }
+  | { type: 'unread.updated'; item_id: string; unread_count: number; unread_messages: number; unread_chats: number }
   | {
       type: 'item.status_changed';
       item_id: string;
       previous_status: string;
       status: string;
-      changed_by: 'DONOR' | 'NGO';
+      /** ADMIN: negociação desfeita porque a moderação removeu o anúncio. */
+      changed_by: 'DONOR' | 'NGO' | 'ADMIN';
       reason: string | null;
       completed_at: string | null;
     };
 
-export const toWsEvent = (e: RealtimeEvent): WsServerMessage =>
+export const toWsEvent = (e: RoomEvent): WsServerMessage =>
   e.type === 'message.created'
     ? { type: 'message.created', item_id: e.itemId, message: toMessageDto(e.message) }
     : {
@@ -174,7 +195,7 @@ export const toWsEvent = (e: RealtimeEvent): WsServerMessage =>
         item_id: e.itemId,
         previous_status: e.from,
         status: e.to,
-        changed_by: party(e.actorRole),
+        changed_by: e.actorRole === 'ADMIN' ? 'ADMIN' : party(e.actorRole),
         reason: e.reason,
         completed_at: toIsoOrNull(e.completedAt),
       };

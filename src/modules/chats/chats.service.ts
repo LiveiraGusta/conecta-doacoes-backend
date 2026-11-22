@@ -1,9 +1,10 @@
 import type { Db, Queryable } from '../../core/db';
 import { AppError } from '../../core/errors';
 import type { RealtimeBus } from '../../core/realtime';
-import type { AuthUser, ChatMessage, ChatSummary, Counterpart, Item, Page, Role } from '../../types';
+import type { AuthUser, ChatMessage, ChatSummary, Counterpart, Item, Page, Role, UnreadSummary } from '../../types';
 import type { ItemEventsRepository } from '../items/item-events.repository';
 import type { ItemsRepository } from '../items/items.repository';
+import { noopNotifier, type Notifier } from '../notifications/notifications.service';
 import type { ChatsRepository } from './chats.repository';
 
 export interface ChatsDeps {
@@ -12,6 +13,8 @@ export interface ChatsDeps {
   chatsRepo: ChatsRepository;
   eventsRepo: Pick<ItemEventsRepository, 'insert'>;
   bus: RealtimeBus;
+  /** E-mail de cancelamento (para a outra parte) e de doação concluída (para o doador). Mensagens não geram e-mail. */
+  notifier?: Notifier;
 }
 
 export interface ChatRoom {
@@ -20,7 +23,7 @@ export interface ChatRoom {
   messages: ChatMessage[];
 }
 
-export const createChatsService = ({ db, itemsRepo, chatsRepo, eventsRepo, bus }: ChatsDeps) => {
+export const createChatsService = ({ db, itemsRepo, chatsRepo, eventsRepo, bus, notifier = noopNotifier }: ChatsDeps) => {
   /**
    * Carrega o item e confirma que o usuário é parte da negociação atual.
    * 404 se não existe; com o item DISPONIVEL, o doador recebe CHAT_CLOSED e os demais 403.
@@ -68,8 +71,27 @@ export const createChatsService = ({ db, itemsRepo, chatsRepo, eventsRepo, bus }
         await participation(db.sql, user, itemId);
         throw new AppError('CHAT_CLOSED');
       }
+      // Quem responde já leu o que recebeu.
+      await chatsRepo.markRead(db.sql, user.id, itemId);
       bus.publish({ type: 'message.created', itemId, message });
+      bus.publish({ type: 'unread.changed', userId: message.receiver_id, itemId });
+      bus.publish({ type: 'unread.changed', userId: user.id, itemId });
       return message;
+    },
+
+    /** Totais para o badge; com itemId, inclui a contagem daquela conversa (usado pelo WebSocket). */
+    unread(user: Pick<AuthUser, 'id'>, itemId?: string): Promise<UnreadSummary & { item_unread: number }> {
+      return chatsRepo.unreadSummary(db.sql, user.id, itemId);
+    },
+
+    /** Marca a conversa como lida (mesmas regras de acesso da leitura da sala) e devolve os totais. */
+    async markRead(user: AuthUser, itemId: string): Promise<UnreadSummary> {
+      await participation(db.sql, user, itemId);
+      await chatsRepo.markRead(db.sql, user.id, itemId);
+      // As outras abas/aparelhos do usuário atualizam o badge.
+      bus.publish({ type: 'unread.changed', userId: user.id, itemId });
+      const { unread_messages, unread_chats } = await chatsRepo.unreadSummary(db.sql, user.id);
+      return { unread_messages, unread_chats };
     },
 
     /** EM_PROGRESSO → DOADO pela ONG selecionada (a rota já exige ONG ATIVO). */
@@ -96,6 +118,7 @@ export const createChatsService = ({ db, itemsRepo, chatsRepo, eventsRepo, bus }
         reason: null,
         completedAt: item.completed_at,
       });
+      notifier.notify({ type: 'donation.completed', itemId, ngoId: ngo.id });
       return item;
     },
 
@@ -132,6 +155,11 @@ export const createChatsService = ({ db, itemsRepo, chatsRepo, eventsRepo, bus }
         reason: reason ?? null,
         completedAt: null,
       });
+      // Avisa a outra parte: a ONG que negociava, se quem cancelou foi o doador, ou o doador.
+      const counterpartId = user.id === item.donor_id ? item.previous_ngo_id : item.donor_id;
+      if (counterpartId) {
+        notifier.notify({ type: 'negotiation.cancelled', itemId, actorId: user.id, counterpartId, reason: reason ?? null });
+      }
       return { item, cancelledBy: user.role };
     },
   };

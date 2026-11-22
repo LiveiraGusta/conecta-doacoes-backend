@@ -13,7 +13,7 @@ O ADR-08 definiu o chat com polling de 3 s e deixou WebSocket para a V2. Na impl
 ## Decisão
 
 1. **O REST continua sendo o contrato.** As rotas `GET/POST /chats/:itemId/messages`, `confirm-receipt` e `cancel` não mudam. O WebSocket em `/api/v1/chats/ws` só **empurra** eventos (`message.created` e `item.status_changed`), e o polling com `?after=` vira fallback.
-2. **A autenticação vem na primeira mensagem** (`{type:'auth', token}` em até 5 s), não na URL: o navegador não envia `Authorization` no handshake e um token na query string vazaria para logs.
+2. ~~**A autenticação vem na primeira mensagem** (`{type:'auth', token}` em até 5 s), não na URL: o navegador não envia `Authorization` no handshake e um token na query string vazaria para logs.~~ **Alterado pelo [ADR-13](ADR-13-sessao-cookie.md):** a sessão passou a ser um cookie httpOnly, conferido no handshake junto com o `Origin`.
 3. **A distribuição é em memória**, atrás da interface `RealtimeBus` (`src/core/realtime.ts`). Basta com 1 instância, o cenário do MVP.
 
 ## Opções consideradas
@@ -39,5 +39,5 @@ Para a distribuição, a alternativa era Postgres `LISTEN/NOTIFY`. Ela funciona 
 - Escalar para mais de uma instância exige trocar o `RealtimeBus` (e o contador do rate limit) por Redis.
 
 **A revisitar:**
-- Notificação fora da sala aberta (mensagens não lidas), quando entrar a V1.1.
+- ~~Notificação fora da sala aberta (mensagens não lidas), quando entrar a V1.1.~~ Feito na V1.1: evento `unread.updated` num canal por usuário do `RealtimeBus`, sem `subscribe`.
 - Implementação do `RealtimeBus` com Redis se a API passar a rodar com mais de uma instância.

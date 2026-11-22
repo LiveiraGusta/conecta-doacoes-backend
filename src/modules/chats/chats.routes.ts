@@ -14,6 +14,7 @@ import {
   MessageDto,
   MessagesQuery,
   SendMessageBody,
+  UnreadSummaryDto,
 } from './chats.dto';
 
 export function chatsRoutes(app: FastifyInstance, ctrl: ChatsController) {
@@ -30,6 +31,27 @@ export function chatsRoutes(app: FastifyInstance, ctrl: ChatsController) {
       response: { 200: ChatListDto, ...errorResponses(400, 401, 403) },
     },
     handler: ctrl.list,
+  });
+
+  r.get('/chats/unread', {
+    preHandler: parties,
+    schema: {
+      tags: ['Chats'],
+      summary: 'Total de mensagens não lidas (badge); em tempo real, evento unread.updated no WebSocket',
+      response: { 200: UnreadSummaryDto, ...errorResponses(401, 403) },
+    },
+    handler: ctrl.unread,
+  });
+
+  r.post('/chats/:itemId/read', {
+    preHandler: parties,
+    schema: {
+      tags: ['Chats'],
+      summary: 'Marcar a conversa como lida; devolve os totais atualizados',
+      params: ItemIdParams,
+      response: { 200: UnreadSummaryDto, ...errorResponses(400, 401, 403, 404, 409) },
+    },
+    handler: ctrl.markRead,
   });
 
   r.get('/chats/:itemId/messages', {

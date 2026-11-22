@@ -5,7 +5,7 @@ export type { InterestedNgo };
 
 export const interestsRepository = {
   /**
-   * Curtida atômica: só insere se o item existe, está DISPONIVEL e é da cidade/UF da ONG.
+   * Curtida atômica: só insere se o item existe, está DISPONIVEL e VISIVEL e é da cidade/UF da ONG.
    * Like duplicado estoura a constraint única (→ 409 ALREADY_INTERESTED no handler).
    */
   async insertIfAvailable(
@@ -16,7 +16,7 @@ export const interestsRepository = {
       INSERT INTO item_interests (item_id, ngo_id)
       SELECT i.id, ${f.ngoId}
       FROM items i
-      WHERE i.id = ${f.itemId} AND i.status = 'DISPONIVEL' AND i.city = ${f.city} AND i.state = ${f.state}
+      WHERE i.id = ${f.itemId} AND i.status = 'DISPONIVEL' AND i.moderation_status = 'VISIVEL' AND i.city = ${f.city} AND i.state = ${f.state}
       RETURNING *`;
     return row ?? null;
   },
@@ -39,7 +39,7 @@ export const interestsRepository = {
   /** ONGs que curtiram o item: ATIVO primeiro, depois por data da curtida. */
   async listByItem(q: Queryable, itemId: string): Promise<InterestedNgo[]> {
     return q<InterestedNgo[]>`
-      SELECT ii.id AS interest_id, u.id AS ngo_id, u.name, u.city, u.state,
+      SELECT ii.id AS interest_id, u.id AS ngo_id, u.name, u.avatar_url, u.city, u.state,
              np.cnpj, np.website, np.status AS ngo_status, ii.created_at AS liked_at
       FROM item_interests ii
       JOIN users u ON u.id = ii.ngo_id

@@ -17,6 +17,7 @@ export const InterestedNgoDto = z
     interest_id: z.uuid(),
     ngo_id: z.uuid(),
     name: z.string(),
+    avatar_url: z.string().nullable(),
     city: z.string(),
     state: z.string(),
     cnpj: z.string(),

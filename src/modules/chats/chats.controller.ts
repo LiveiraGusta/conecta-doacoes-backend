@@ -19,6 +19,15 @@ export const createChatsController = (service: ChatsService) => ({
     return reply.status(200).send(toChatListDto(page));
   },
 
+  unread: async (req: FastifyRequest, reply: FastifyReply) => {
+    const { unread_messages, unread_chats } = await service.unread(req.user);
+    return reply.status(200).send({ unread_messages, unread_chats });
+  },
+
+  markRead: async (req: FastifyRequest<{ Params: ItemIdParams }>, reply: FastifyReply) => {
+    return reply.status(200).send(await service.markRead(req.user, req.params.itemId));
+  },
+
   room: async (req: FastifyRequest<{ Params: ItemIdParams; Querystring: MessagesQuery }>, reply: FastifyReply) => {
     const after = req.query.after ? new Date(req.query.after) : undefined;
     const room = await service.room(req.user, req.params.itemId, after);

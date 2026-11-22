@@ -3,6 +3,7 @@ import { fakeStorage } from '../../../test/helpers/fake-storage';
 import type { Db } from '../../core/db';
 import type { AdminNgoRow, AdminRepository } from './admin.repository';
 import { createAdminService } from './admin.service';
+import type { NgoProfile } from '../../types';
 
 const ROW: AdminNgoRow = {
   ngo_profile_id: 'p1',
@@ -19,12 +20,17 @@ const ROW: AdminNgoRow = {
   created_at: new Date(),
 };
 
-const setup = (repo: Partial<AdminRepository>) =>
-  createAdminService({
+const notifier = { notify: vi.fn(), drain: async () => {} };
+
+const setup = (repo: Partial<AdminRepository>) => {
+  notifier.notify.mockClear();
+  return createAdminService({
     db: { sql: {} as Db['sql'] },
     adminRepo: repo as AdminRepository,
     storage: fakeStorage(),
+    notifier,
   });
+};
 
 describe('adminService', () => {
   it('troca o caminho do documento por URL assinada de 10 minutos', async () => {
@@ -44,5 +50,27 @@ describe('adminService', () => {
     const service = setup({ updateNgoStatus });
     await service.updateNgoStatus('p1', 'ATIVO', 'motivo que deve ser ignorado');
     expect(updateNgoStatus).toHaveBeenCalledWith(expect.anything(), 'p1', 'ATIVO', null);
+  });
+});
+
+describe('adminService — e-mails para a ONG', () => {
+  const profile = { id: 'p1', user_id: 'n1', status: 'ATIVO', rejection_reason: null } as NgoProfile;
+
+  it('aprovação avisa a ONG', async () => {
+    await setup({ updateNgoStatus: async () => profile }).updateNgoStatus('p1', 'ATIVO');
+    expect(notifier.notify).toHaveBeenCalledWith({ type: 'ngo.approved', userId: 'n1' });
+  });
+
+  it('rejeição avisa a ONG com o motivo', async () => {
+    const rejected = { ...profile, status: 'REJEITADO', rejection_reason: 'Documento ilegível' } as NgoProfile;
+    await setup({ updateNgoStatus: async () => rejected }).updateNgoStatus('p1', 'REJEITADO', 'Documento ilegível');
+    expect(notifier.notify).toHaveBeenCalledWith({ type: 'ngo.rejected', userId: 'n1', reason: 'Documento ilegível' });
+  });
+
+  it('ONG inexistente: erro e nenhum e-mail', async () => {
+    await expect(setup({ updateNgoStatus: async () => null }).updateNgoStatus('x', 'ATIVO')).rejects.toMatchObject({
+      code: 'NGO_NOT_FOUND',
+    });
+    expect(notifier.notify).not.toHaveBeenCalled();
   });
 });
