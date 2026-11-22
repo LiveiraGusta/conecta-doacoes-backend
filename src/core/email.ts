@@ -1,4 +1,4 @@
-/** Envio de e-mail transacional. Em produção, Resend; em dev sem chave, só loga; nos testes, fake em memória. */
+/** Envio de e-mail transacional. Em produção, Brevo ou Resend; em dev sem chave, só loga; nos testes, fake em memória. */
 export interface EmailMessage {
   to: string;
   subject: string;
@@ -35,16 +35,55 @@ export function createResendMailer(opts: { apiKey: string; from: string; fetch?:
   };
 }
 
-/** Dev sem RESEND_API_KEY: o e-mail (com o link) aparece no log do servidor. */
-export function createLogMailer(log: { info(obj: object, msg: string): void }): Mailer {
+/** "Nome <email@x.com>" ou só "email@x.com" → partes separadas. Inválido = undefined. */
+export function parseAddress(value: string): { name?: string; email: string } | undefined {
+  const match = /^\s*(?:(.*?)\s*<([^<>\s]+@[^<>\s]+)>|([^<>\s]+@[^<>\s]+))\s*$/.exec(value);
+  if (!match) return undefined;
+  const email = match[2] ?? match[3]!;
+  const name = match[1]?.replace(/^"|"$/g, '').trim();
+  return name ? { name, email } : { email };
+}
+
+/**
+ * API HTTP do Brevo (https://developers.brevo.com/reference/sendtransacemail), sem SDK.
+ * Não exige domínio próprio: basta o remetente estar verificado no painel (Senders).
+ */
+export function createBrevoMailer(opts: { apiKey: string; from: string; fetch?: typeof fetch }): Mailer {
+  const doFetch = opts.fetch ?? fetch;
+  const sender = parseAddress(opts.from);
+  if (!sender) throw new Error(`Remetente inválido: ${opts.from}`);
   return {
     async send(message) {
-      log.info({ to: message.to, subject: message.subject, text: message.text }, 'E-mail (não enviado: sem RESEND_API_KEY)');
+      const res = await doFetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: { 'api-key': opts.apiKey, 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({
+          sender,
+          to: [{ email: message.to }],
+          subject: message.subject,
+          htmlContent: message.html,
+          textContent: message.text,
+        }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error(`Brevo respondeu ${res.status}: ${body.slice(0, 300)}`);
+      }
     },
   };
 }
 
-const escapeHtml = (s: string) =>
+/** Dev sem chave de provedor: o e-mail (com o link) aparece no log do servidor. */
+export function createLogMailer(log: { info(obj: object, msg: string): void }): Mailer {
+  return {
+    async send(message) {
+      log.info({ to: message.to, subject: message.subject, text: message.text }, 'E-mail (não enviado: sem BREVO_API_KEY nem RESEND_API_KEY)');
+    },
+  };
+}
+
+export const escapeHtml = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 export function passwordResetEmail(p: { to: string; name: string; link: string; minutes: number }): EmailMessage {

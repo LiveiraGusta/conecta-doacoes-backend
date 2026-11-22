@@ -30,6 +30,7 @@ function setup(opts: { user?: UserWithProfile | null; repo?: Partial<PasswordRes
     setPassword: vi.fn(async () => {}),
   };
   const onEmailError = vi.fn();
+  const notifier = { notify: vi.fn(), drain: async () => {} };
   const service = createPasswordResetService({
     db: fakeDb(),
     authRepo,
@@ -43,8 +44,9 @@ function setup(opts: { user?: UserWithProfile | null; repo?: Partial<PasswordRes
     },
     appUrl: 'https://app.test',
     onEmailError,
+    notifier,
   });
-  return { service, outbox, resetsRepo, authRepo, onEmailError };
+  return { service, outbox, resetsRepo, authRepo, onEmailError, notifier };
 }
 
 const tokenFrom = (m: EmailMessage) => new URL(m.text.match(/https:\S+/)![0]).searchParams.get('token')!;
@@ -86,12 +88,13 @@ describe('passwordResetService.requestReset', () => {
 
 describe('passwordResetService.resetPassword', () => {
   it('token inválido, expirado ou usado: INVALID_RESET_TOKEN sem mexer na senha', async () => {
-    const { service, authRepo } = setup({ repo: { consume: async () => null } });
+    const { service, authRepo, notifier } = setup({ repo: { consume: async () => null } });
     await expect(service.resetPassword('qualquer', 'NovaSenha9')).rejects.toMatchObject({
       status: 400,
       code: 'INVALID_RESET_TOKEN',
     });
     expect(authRepo.setPassword).not.toHaveBeenCalled();
+    expect(notifier.notify).not.toHaveBeenCalled();
   });
 
   it('consome pelo hash, grava a senha nova e invalida os outros links', async () => {
@@ -100,5 +103,11 @@ describe('passwordResetService.resetPassword', () => {
     expect(resetsRepo.consume).toHaveBeenCalledWith(expect.anything(), hashResetToken('tok'));
     expect(authRepo.setPassword).toHaveBeenCalledWith(expect.anything(), 'u1', 'h:NovaSenha9');
     expect(resetsRepo.deleteOthers).toHaveBeenCalledWith(expect.anything(), 'u1', hashResetToken('tok'));
+  });
+
+  it('agenda o aviso de senha alterada para o dono da conta', async () => {
+    const { service, notifier } = setup();
+    await service.resetPassword('tok', 'NovaSenha9');
+    expect(notifier.notify).toHaveBeenCalledWith({ type: 'password.changed', userId: 'u1' });
   });
 });

@@ -14,7 +14,7 @@ import pkg from '../package.json' with { type: 'json' };
 import './core/dto'; // mensagens de validação do Zod em PT-BR
 import { authPlugin } from './core/auth';
 import { createDb, type Db } from './core/db';
-import { createLogMailer, createResendMailer, type Mailer } from './core/email';
+import { createBrevoMailer, createLogMailer, createResendMailer, type Mailer } from './core/email';
 import { allowedOrigins, env } from './core/env';
 import { AppError } from './core/errors';
 import { errorPlugin } from './core/errors/handler';
@@ -54,6 +54,8 @@ import { createHealthController } from './modules/health/health.controller';
 import { itemEventsRepository } from './modules/items/item-events.repository';
 import { createItemsController } from './modules/items/items.controller';
 import { itemsRepository } from './modules/items/items.repository';
+import { notificationsRepository } from './modules/notifications/notifications.repository';
+import { createNotifier, type Notifier } from './modules/notifications/notifications.service';
 import { itemsRoutes } from './modules/items/items.routes';
 import { createItemsService } from './modules/items/items.service';
 import { healthRoutes } from './modules/health/health.routes';
@@ -70,10 +72,12 @@ export interface BuildAppOptions {
   logger?: boolean;
   /** Barramento de eventos do chat; por padrão, em memória (1 instância). */
   bus?: RealtimeBus;
-  /** Envio de e-mail; por padrão Resend (com RESEND_API_KEY) ou log. Fake nos testes. */
+  /** Envio de e-mail; por padrão Brevo (BREVO_API_KEY), Resend (RESEND_API_KEY) ou log. Fake nos testes. */
   mailer?: Mailer;
   /** Recebe cada rota registrada (usado pelo teste que exige 401 em toda rota não pública). */
   onRoute?: (route: RouteOptions) => void;
+  /** Recebe o notificador de e-mails (os testes usam `drain()` para esperar os envios). */
+  onNotifier?: (notifier: Notifier) => void;
 }
 
 export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInstance> {
@@ -179,9 +183,23 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
 
   const mailer =
     opts.mailer ??
-    (env.RESEND_API_KEY
-      ? createResendMailer({ apiKey: env.RESEND_API_KEY, from: env.EMAIL_FROM })
-      : createLogMailer(app.log));
+    (env.BREVO_API_KEY
+      ? createBrevoMailer({ apiKey: env.BREVO_API_KEY, from: env.EMAIL_FROM })
+      : env.RESEND_API_KEY
+        ? createResendMailer({ apiKey: env.RESEND_API_KEY, from: env.EMAIL_FROM })
+        : createLogMailer(app.log));
+
+  // E-mails dos pontos do fluxo (cadastro, aprovação, interesse, escolha, cancelamento, conclusão…).
+  const notifier = createNotifier({
+    db,
+    repo: notificationsRepository,
+    mailer,
+    appUrl: env.APP_URL,
+    onError: (err, event) => app.log.error({ err, event: event.type }, 'Falha ao enviar e-mail de notificação'),
+  });
+  opts.onNotifier?.(notifier);
+  // Ao desligar, espera os e-mails em andamento (antes de fechar o banco).
+  app.addHook('onClose', () => notifier.drain());
 
   // Injeção de dependência sem container: repositories → services → controllers.
   const services = {
@@ -191,6 +209,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       storage,
       hasher: bcryptHasher,
       signToken: (payload) => app.jwt.sign(payload),
+      notifier,
     }),
     passwordReset: createPasswordResetService({
       db,
@@ -200,14 +219,16 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       mailer,
       appUrl: env.APP_URL,
       onEmailError: (err) => app.log.error({ err }, 'Falha ao enviar e-mail de redefinição de senha'),
+      notifier,
     }),
-    admin: createAdminService({ db, adminRepo: adminRepository, storage }),
+    admin: createAdminService({ db, adminRepo: adminRepository, storage, notifier }),
     items: createItemsService({ db, itemsRepo: itemsRepository, eventsRepo: itemEventsRepository, storage }),
     interests: createInterestsService({
       db,
       itemsRepo: itemsRepository,
       interestsRepo: interestsRepository,
       eventsRepo: itemEventsRepository,
+      notifier,
     }),
     chats: createChatsService({
       db,
@@ -215,6 +236,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       chatsRepo: chatsRepository,
       eventsRepo: itemEventsRepository,
       bus,
+      notifier,
     }),
     reports: createReportsService({
       db,
@@ -222,6 +244,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       reportsRepo: reportsRepository,
       eventsRepo: itemEventsRepository,
       bus,
+      notifier,
     }),
     profile: createProfileService({
       db,
@@ -229,6 +252,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       authRepo: authRepository,
       storage,
       hasher: bcryptHasher,
+      notifier,
     }),
   };
   const users = createUsersService({ db, usersRepo: usersRepository, items: services.items });

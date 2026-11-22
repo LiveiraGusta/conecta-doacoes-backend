@@ -45,8 +45,9 @@ function setup(repo: Partial<AuthRepository> = {}) {
     ...repo,
   } as unknown as AuthRepository;
   const signToken = vi.fn(() => 'token-assinado');
-  const service = createAuthService({ db: fakeDb(), authRepo, storage, hasher, signToken });
-  return { service, storage, signToken };
+  const notifier = { notify: vi.fn(), drain: async () => {} };
+  const service = createAuthService({ db: fakeDb(), authRepo, storage, hasher, signToken, notifier });
+  return { service, storage, signToken, notifier };
 }
 
 describe('authService.registerDonor', () => {
@@ -60,8 +61,15 @@ describe('authService.registerDonor', () => {
   });
 
   it('EMAIL_TAKEN quando o e-mail já existe', async () => {
-    const { service } = setup({ emailExists: async () => true });
+    const { service, notifier } = setup({ emailExists: async () => true });
     await expect(service.registerDonor(NGO_INPUT)).rejects.toMatchObject({ status: 409, code: 'EMAIL_TAKEN' });
+    expect(notifier.notify).not.toHaveBeenCalled();
+  });
+
+  it('agenda o e-mail de boas-vindas', async () => {
+    const { service, notifier } = setup();
+    await service.registerDonor({ ...NGO_INPUT, name: 'Marina' });
+    expect(notifier.notify).toHaveBeenCalledWith({ type: 'donor.registered', userId: USER.id });
   });
 });
 
@@ -130,5 +138,19 @@ describe('authService.me', () => {
   it('UNAUTHORIZED se o usuário sumiu', async () => {
     const { service } = setup();
     await expect(service.me(USER.id)).rejects.toMatchObject({ status: 401, code: 'UNAUTHORIZED' });
+  });
+});
+
+describe('authService.registerNgo — e-mails', () => {
+  it('agenda a confirmação para a ONG e o aviso aos administradores', async () => {
+    const { service, notifier } = setup();
+    await service.registerNgo(NGO_INPUT, [PDF]);
+    expect(notifier.notify).toHaveBeenCalledWith({ type: 'ngo.registered', userId: expect.any(String) });
+  });
+
+  it('cadastro recusado não gera e-mail', async () => {
+    const { service, notifier } = setup({ cnpjExists: async () => true });
+    await expect(service.registerNgo(NGO_INPUT, [PDF])).rejects.toMatchObject({ code: 'CNPJ_TAKEN' });
+    expect(notifier.notify).not.toHaveBeenCalled();
   });
 });

@@ -7,6 +7,7 @@ import type { Storage } from '../../core/storage';
 import type { AuthUser, Category, UserPreferences, UserWithProfile } from '../../types';
 import { DEFAULT_PREFERENCES } from '../auth/auth.dto';
 import type { AuthRepository } from '../auth/auth.repository';
+import { noopNotifier, type Notifier } from '../notifications/notifications.service';
 import { NGO_ONLY_FIELDS, type AddressBody } from './profile.dto';
 import type { NgoProfilePatch, ProfileRepository } from './profile.repository';
 
@@ -16,6 +17,8 @@ export interface ProfileDeps {
   authRepo: Pick<AuthRepository, 'findById' | 'setPassword'>;
   storage: Storage;
   hasher: PasswordHasher;
+  /** Senha alterada, documento reenviado (para os administradores) e conta excluída. */
+  notifier?: Notifier;
 }
 
 export interface ProfilePatch {
@@ -37,7 +40,7 @@ const addressColumns = (address: AddressBody | undefined): NgoProfilePatch => {
   return { ...address, complement: address.complement ?? null };
 };
 
-export const createProfileService = ({ db, profileRepo, authRepo, storage, hasher }: ProfileDeps) => {
+export const createProfileService = ({ db, profileRepo, authRepo, storage, hasher, notifier = noopNotifier }: ProfileDeps) => {
   async function loadSelf(userId: string): Promise<UserWithProfile> {
     const user = await authRepo.findById(db.sql, userId);
     if (!user) throw new AppError('UNAUTHORIZED');
@@ -144,6 +147,7 @@ export const createProfileService = ({ db, profileRepo, authRepo, storage, hashe
       await checkPassword(self, current);
       if (await hasher.compare(next, self.password_hash)) throw new AppError('SAME_PASSWORD');
       await authRepo.setPassword(db.sql, user.id, await hasher.hash(next));
+      notifier.notify({ type: 'password.changed', userId: user.id });
     },
 
     /** ONG pendente ou rejeitada reenvia o documento e volta para a fila de análise. */
@@ -166,6 +170,7 @@ export const createProfileService = ({ db, profileRepo, authRepo, storage, hashe
         throw err;
       }
       await storage.remove('docs', [oldPath]).catch(() => {}); // o antigo sai só depois do commit
+      notifier.notify({ type: 'ngo.document_resubmitted', userId: ngo.id });
       return loadSelf(ngo.id);
     },
 
@@ -190,6 +195,8 @@ export const createProfileService = ({ db, profileRepo, authRepo, storage, hashe
         await profileRepo.anonymize(tx, user.id);
         return { photoUrls: urls, documentPath: doc };
       });
+      // O e-mail real some na anonimização: vai junto no evento.
+      notifier.notify({ type: 'account.deleted', email: self.email, name: self.name });
 
       // Arquivos saem depois do commit; falha aqui não desfaz a exclusão.
       // A foto de perfil e o banner saem junto: a conta anonimizada não guarda imagem da pessoa.

@@ -4,6 +4,7 @@ import { passwordResetEmail, type Mailer } from '../../core/email';
 import { AppError } from '../../core/errors';
 import type { PasswordHasher } from '../../core/passwords';
 import type { AuthRepository } from './auth.repository';
+import { noopNotifier, type Notifier } from '../notifications/notifications.service';
 import type { PasswordResetsRepository } from './password-resets.repository';
 
 export const RESET_TTL_MINUTES = 30;
@@ -20,12 +21,14 @@ export interface PasswordResetDeps {
   appUrl: string;
   /** Falha no envio não muda a resposta (sempre 202): só é registrada. */
   onEmailError(err: unknown): void;
+  /** Aviso de "senha alterada" depois da redefinição. */
+  notifier?: Notifier;
 }
 
 export const hashResetToken = (token: string) => createHash('sha256').update(token).digest('hex');
 
 export const createPasswordResetService = (deps: PasswordResetDeps) => {
-  const { db, authRepo, resetsRepo, hasher, mailer } = deps;
+  const { db, authRepo, resetsRepo, hasher, mailer, notifier = noopNotifier } = deps;
 
   return {
     /**
@@ -49,12 +52,14 @@ export const createPasswordResetService = (deps: PasswordResetDeps) => {
     /** Consome o token (uso único), grava a senha nova e derruba as sessões abertas. */
     async resetPassword(token: string, newPassword: string): Promise<void> {
       const tokenHash = hashResetToken(token);
-      await db.tx(async (tx) => {
-        const userId = await resetsRepo.consume(tx, tokenHash);
-        if (!userId) throw new AppError('INVALID_RESET_TOKEN');
-        await authRepo.setPassword(tx, userId, await hasher.hash(newPassword));
-        await resetsRepo.deleteOthers(tx, userId, tokenHash);
+      const userId = await db.tx(async (tx) => {
+        const id = await resetsRepo.consume(tx, tokenHash);
+        if (!id) throw new AppError('INVALID_RESET_TOKEN');
+        await authRepo.setPassword(tx, id, await hasher.hash(newPassword));
+        await resetsRepo.deleteOthers(tx, id, tokenHash);
+        return id;
       });
+      notifier.notify({ type: 'password.changed', userId });
     },
   };
 };

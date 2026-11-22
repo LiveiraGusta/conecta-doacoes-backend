@@ -17,6 +17,7 @@ import type {
 } from '../../types';
 import type { ItemEventsRepository } from '../items/item-events.repository';
 import type { ItemsRepository } from '../items/items.repository';
+import { noopNotifier, type Notifier } from '../notifications/notifications.service';
 import type { ReportsRepository } from './reports.repository';
 
 export interface ReportsDeps {
@@ -25,6 +26,8 @@ export interface ReportsDeps {
   reportsRepo: ReportsRepository;
   eventsRepo: Pick<ItemEventsRepository, 'listByItem' | 'insert'>;
   bus: Pick<RealtimeBus, 'publish'>;
+  /** Avisa os administradores de cada denúncia nova. */
+  notifier?: Notifier;
 }
 
 export interface ReportDetail {
@@ -49,7 +52,7 @@ export const AUTO_HIDE_THRESHOLD = 3;
 /** findView pede quem está vendo; o Admin não curte nada. */
 const NO_VIEWER = '00000000-0000-0000-0000-000000000000';
 
-export const createReportsService = ({ db, itemsRepo, reportsRepo, eventsRepo, bus }: ReportsDeps) => ({
+export const createReportsService = ({ db, itemsRepo, reportsRepo, eventsRepo, bus, notifier = noopNotifier }: ReportsDeps) => ({
   /**
    * Denuncia a outra parte da negociação atual. Mesmas regras de acesso do chat:
    * 404 se o item não existe; item DISPONIVEL → CHAT_CLOSED para o doador e 403 para os demais;
@@ -66,7 +69,9 @@ export const createReportsService = ({ db, itemsRepo, reportsRepo, eventsRepo, b
       throw new AppError('FORBIDDEN', 'Você não participa desta negociação.');
     }
     const reportedId = user.id === item.donor_id ? item.selected_ngo_id! : item.donor_id;
-    return reportsRepo.insert(db.sql, { itemId, reporterId: user.id, reportedId, kind: 'CHAT', reason });
+    const report = await reportsRepo.insert(db.sql, { itemId, reporterId: user.id, reportedId, kind: 'CHAT', reason });
+    notifier.notify({ type: 'report.created', reportId: report.id, itemId, reporterId: user.id, reportedId });
+    return report;
   },
 
   /**
