@@ -111,6 +111,35 @@ describe('reportsService.createForItem (anúncio)', () => {
     expect(at.itemsRepo.hideIfVisible).toHaveBeenCalledWith(expect.anything(), 'i1');
   });
 
+  it('avisa os administradores; `hidden` só na denúncia que tirou o anúncio do ar', async () => {
+    const below = setup({ openReporters: 1 });
+    await below.service.createForItem(OTHER, 'i1', input);
+    expect(below.notifier.notify).toHaveBeenCalledWith({
+      type: 'item.reported',
+      reportId: 'r1',
+      itemId: 'i1',
+      reporterId: 'n2',
+      category: 'NUDEZ',
+      hidden: false,
+    });
+
+    const at = setup({ openReporters: AUTO_HIDE_THRESHOLD });
+    await at.service.createForItem(OTHER, 'i1', input);
+    expect(at.notifier.notify).toHaveBeenCalledWith(expect.objectContaining({ hidden: true }));
+
+    // Já estava oculto: hideIfVisible não muda nada → não conta como "tirou do ar".
+    const after = setup({ openReporters: AUTO_HIDE_THRESHOLD + 1 });
+    after.itemsRepo.hideIfVisible.mockResolvedValueOnce(null);
+    await after.service.createForItem(OTHER, 'i1', input);
+    expect(after.notifier.notify).toHaveBeenCalledWith(expect.objectContaining({ hidden: false }));
+  });
+
+  it('denúncia recusada não avisa ninguém', async () => {
+    const { service, notifier } = setup({ item: item() });
+    await expect(service.createForItem(DONOR, 'i1', input)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(notifier.notify).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['item inexistente', null, OTHER, 'ITEM_NOT_FOUND'],
     ['anúncio removido', item({ moderation_status: 'REMOVIDO' }), OTHER, 'ITEM_NOT_FOUND'],
@@ -168,18 +197,31 @@ describe('reportsService.removeItem / restoreItem', () => {
     expect(reportsRepo.resolveOpenItemReports).toHaveBeenCalledWith(expect.anything(), 'i1', 'a1', 'ITEM_REMOVIDO');
   });
 
-  it('remover item disponível ou doado: sem eventos nem tempo real', async () => {
-    const { service, eventsRepo, bus } = setup({ item: item({ status: 'DOADO' }) });
+  it('remover item em negociação: e-mail para o doador e para a ONG escolhida', async () => {
+    const { service, notifier } = setup();
+    await service.removeItem(ADMIN, 'i1', 'Foto com nudez explícita');
+    expect(notifier.notify).toHaveBeenCalledWith({
+      type: 'item.removed',
+      itemId: 'i1',
+      reason: 'Foto com nudez explícita',
+      cancelledNgoId: 'n1',
+    });
+  });
+
+  it('remover item disponível ou doado: sem eventos nem tempo real; e-mail só para o doador', async () => {
+    const { service, eventsRepo, bus, notifier } = setup({ item: item({ status: 'DOADO' }) });
     expect((await service.removeItem(ADMIN, 'i1', 'Discurso de ódio')).cancelledNegotiation).toBe(false);
     expect(eventsRepo.insert).not.toHaveBeenCalled();
     expect(bus.publish).not.toHaveBeenCalled();
+    expect(notifier.notify).toHaveBeenCalledWith(expect.objectContaining({ type: 'item.removed', cancelledNgoId: null }));
   });
 
-  it('remover de novo é idempotente: não muda o motivo', async () => {
-    const { service, itemsRepo } = setup({ item: item({ moderation_status: 'REMOVIDO', moderation_reason: 'antes' }) });
+  it('remover de novo é idempotente: não muda o motivo nem manda e-mail', async () => {
+    const { service, itemsRepo, notifier } = setup({ item: item({ moderation_status: 'REMOVIDO', moderation_reason: 'antes' }) });
     const res = await service.removeItem(ADMIN, 'i1', 'outro motivo qualquer');
     expect(itemsRepo.setModeration).not.toHaveBeenCalled();
     expect(res.item.moderation_reason).toBe('antes');
+    expect(notifier.notify).not.toHaveBeenCalled();
   });
 
   it('manter: volta a VISIVEL e descarta as denúncias como IMPROCEDENTE', async () => {

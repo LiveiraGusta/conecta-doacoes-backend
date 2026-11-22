@@ -194,3 +194,5 @@ Mudanças pedidas no planejamento do frontend React. O plano e o registro comple
 | — | Na exclusão de conta, o e-mail vai no evento | Claude | A anonimização troca o e-mail no banco; depois dela, o endereço real não existe mais para ser buscado |
 | — | Sem opção de desligar os e-mails no perfil, por enquanto | Claude | Exigiria migração, nova preferência e tela no frontend. Fica como próximo passo, se pedirem |
 | — | A API espera os envios em andamento ao desligar (`onClose`) | Claude | Um deploy no meio de um envio não perde o e-mail |
+| — | Cada denúncia de anúncio gera e-mail para os administradores; a que tira o anúncio do ar (3ª pessoa) muda o assunto para "Anúncio fora do ar por denúncias" | Usuário + Claude | O Admin sabe na hora que há anúncio oculto esperando decisão. Denúncias seguintes num anúncio já oculto não mudam o assunto |
+| — | Remoção pela moderação avisa o doador (com o motivo) e, se havia negociação, a ONG escolhida (sem o motivo) | Usuário + Claude | O doador nunca fica sabendo quem denunciou, como a tela promete. Remover de novo não repete os e-mails. Manter o anúncio não gera e-mail |

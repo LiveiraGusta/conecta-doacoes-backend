@@ -119,13 +119,16 @@ O provedor é escolhido na subida: **Brevo** (`BREVO_API_KEY`), senão **Resend*
 | Doador escolhe a ONG | ONG | Sua ONG foi escolhida para "…" | `interests.service.ts` |
 | Negociação cancelada | A outra parte (com o motivo) | Negociação cancelada | `chats.service.ts` |
 | ONG confirma o recebimento | Doador | Doação concluída | `chats.service.ts` |
-| Denúncia aberta | Cada administrador | Nova denúncia sobre "…" | `reports.service.ts` |
+| Denúncia na conversa | Cada administrador | Nova denúncia sobre "…" | `reports.service.ts` |
+| Denúncia de anúncio | Cada administrador (com o motivo escolhido) | Anúncio denunciado: "…" ou, na denúncia que tira o anúncio do ar, Anúncio fora do ar por denúncias: "…" | `reports.service.ts` |
+| Administrador remove o anúncio | Doador (com o motivo) e, se havia negociação, a ONG escolhida | Anúncio removido: "…" / Negociação encerrada: "…" | `reports.service.ts` |
 | Conta excluída | A pessoa (endereço de antes da anonimização) | Conta excluída | `profile.service.ts` |
 
 Regras:
 
 - **Mensagem de chat não gera e-mail.** O app já avisa em tempo real, e o volume passaria do limite grátis do Brevo (cerca de 300 por dia).
 - **Falha no envio não muda a resposta da API.** O erro vai para o log com o tipo do evento (`Falha ao enviar e-mail de notificação`). Cada destinatário é independente.
+- **Quem denunciou um anúncio não aparece para o doador.** O nome só vai no e-mail dos administradores; o doador recebe apenas o motivo da remoção. Remover um anúncio já removido não repete os e-mails.
 - **Conta excluída não recebe nada depois.** As buscas ignoram usuários com `deleted_at`.
 - Todo texto vindo do usuário (nome, título, motivo) é escapado no HTML, e todo e-mail tem também a versão em texto puro.
 - Ao desligar, a API espera os e-mails em andamento antes de fechar o banco.

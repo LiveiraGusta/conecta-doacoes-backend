@@ -323,7 +323,10 @@ Além dos avisos dentro do app, cada passo importante da jornada chega por e-mai
 | Doador escolhe a ONG | ONG | Sua ONG foi escolhida para "{item}" | Conversa |
 | Negociação cancelada | A outra parte (com o motivo) | Negociação cancelada | Minhas doações ou feed |
 | ONG confirma o recebimento | Doador | Doação concluída | Nova doação |
-| Denúncia aberta | Administradores | Nova denúncia sobre "{item}" | Denúncia |
+| Denúncia na conversa | Administradores | Nova denúncia sobre "{item}" | Denúncia |
+| Denúncia de anúncio | Administradores (com o motivo) | Anúncio denunciado: "{item}" (na 3ª pessoa: Anúncio fora do ar por denúncias) | Denúncia |
+| Administrador remove o anúncio | Doador (com o motivo) | Anúncio removido: "{item}" | Minhas doações |
+| Administrador remove o anúncio em negociação | ONG escolhida | Negociação encerrada: "{item}" | Feed |
 | "Esqueci a senha" | A pessoa | Redefinição de senha | Criar nova senha |
 | Senha alterada | A pessoa | Sua senha foi alterada | App |
 | Conta excluída | A pessoa | Conta excluída | — |
@@ -337,7 +340,7 @@ flowchart LR
         B1["Boas-vindas"] --> B2["Nova ONG interessada"] --> B3["Doação concluída"]
     end
     subgraph Administrador
-        C1["Nova ONG para análise"] --> C2["Nova denúncia"]
+        C1["Nova ONG para análise"] --> C2["Nova denúncia / Anúncio denunciado"]
     end
 ```
 
