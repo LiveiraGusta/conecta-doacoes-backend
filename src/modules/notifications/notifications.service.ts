@@ -7,6 +7,7 @@
  */
 import type { Db } from '../../core/db';
 import type { EmailMessage, Mailer } from '../../core/email';
+import type { ReportCategory } from '../../types';
 import type { Contact, NotificationsRepository } from './notifications.repository';
 import { links, templates, type EmailContent } from './notifications.templates';
 
@@ -31,6 +32,13 @@ export type NotificationEvent =
   | { type: 'password.changed'; userId: string }
   /** Denúncia aberta: avisa os administradores. */
   | { type: 'report.created'; reportId: string; itemId: string; reporterId: string; reportedId: string }
+  /** Denúncia de anúncio: avisa os administradores; `hidden` = esta denúncia tirou o anúncio do ar. */
+  | { type: 'item.reported'; reportId: string; itemId: string; reporterId: string; category: ReportCategory; hidden: boolean }
+  /**
+   * Administrador removeu o anúncio: avisa o doador (com o motivo) e, se havia negociação,
+   * a ONG escolhida. O doador não fica sabendo quem denunciou.
+   */
+  | { type: 'item.removed'; itemId: string; reason: string; cancelledNgoId: string | null }
   /** Conta excluída. Os dados vêm prontos porque, depois da exclusão, o e-mail real não existe mais no banco. */
   | { type: 'account.deleted'; email: string; name: string };
 
@@ -42,6 +50,17 @@ export interface Notifier {
   /** Espera os envios em andamento (testes e desligamento da API). */
   drain(): Promise<void>;
 }
+
+/** Mesmos rótulos da tela "Denunciar anúncio" do app. */
+const CATEGORY_LABELS: Record<ReportCategory, string> = {
+  NUDEZ: 'Nudez ou conteúdo sexual',
+  ODIO: 'Discurso de ódio ou discriminação',
+  VIOLENCIA: 'Violência ou conteúdo chocante',
+  GOLPE: 'Golpe ou fraude',
+  PROIBIDO: 'Item proibido',
+  SPAM: 'Não é doação ou é propaganda',
+  OUTRO: 'Outro motivo',
+};
 
 /** Para services criados sem notificações (testes unitários antigos, scripts). */
 export const noopNotifier: Notifier = { notify: () => {}, drain: async () => {} };
@@ -155,6 +174,45 @@ export function createNotifier({ db, repo, mailer, appUrl, onError }: NotifierDe
         return admins.map((a) =>
           to(a, templates.reportCreated({ adminName: a.name, reporterName, reportedName, itemTitle: item.title, reportId: event.reportId }, l)),
         );
+      }
+      case 'item.reported': {
+        const [item, find, admins] = await Promise.all([
+          repo.findItem(db.sql, event.itemId),
+          contacts(event.reporterId),
+          repo.findAdmins(db.sql),
+        ]);
+        if (!item) return [];
+        const reporterName = find(event.reporterId)?.name ?? 'Usuário removido';
+        return admins.map((a) =>
+          to(
+            a,
+            templates.itemReported(
+              {
+                adminName: a.name,
+                reporterName,
+                itemTitle: item.title,
+                category: CATEGORY_LABELS[event.category],
+                reportId: event.reportId,
+                hidden: event.hidden,
+              },
+              l,
+            ),
+          ),
+        );
+      }
+      case 'item.removed': {
+        const item = await repo.findItem(db.sql, event.itemId);
+        if (!item) return [];
+        const find = await contacts(item.donor_id, ...(event.cancelledNgoId ? [event.cancelledNgoId] : []));
+        const donor = find(item.donor_id);
+        const ngo = event.cancelledNgoId ? find(event.cancelledNgoId) : undefined;
+        const cancelledNegotiation = event.cancelledNgoId !== null;
+        return [
+          ...(donor
+            ? [to(donor, templates.itemRemoved({ name: donor.name, itemTitle: item.title, reason: event.reason, cancelledNegotiation }, l))]
+            : []),
+          ...(ngo ? [to(ngo, templates.negotiationEndedByModeration({ ngoName: ngo.name, itemTitle: item.title }, l))] : []),
+        ];
       }
       case 'account.deleted':
         return [to({ email: event.email }, templates.accountDeleted({ name: event.name }))];

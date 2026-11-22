@@ -141,6 +141,54 @@ describe('notifier — quem recebe cada e-mail', () => {
     expect(mails[0]!.text).toContain('https://app.test/admin/reports/r1');
   });
 
+  it('denúncia de anúncio avisa cada administrador, com o motivo e o link da denúncia', async () => {
+    const mails = await setup().run({
+      type: 'item.reported',
+      reportId: 'r2',
+      itemId: 'i1',
+      reporterId: 'n1',
+      category: 'GOLPE',
+      hidden: false,
+    });
+    expect(mails.map((m) => m.to).sort()).toEqual([admins[0]!.email, admins[1]!.email].sort());
+    expect(mails[0]!.subject).toContain('Anúncio denunciado: "Casaco infantil"');
+    expect(mails[0]!.text).toContain('Casa Esperança denunciou o anúncio');
+    expect(mails[0]!.text).toContain('Golpe ou fraude');
+    expect(mails[0]!.text).toContain('continua no ar');
+    expect(mails[0]!.text).toContain('https://app.test/admin/reports/r2');
+  });
+
+  it('denúncia que tirou o anúncio do ar muda o assunto', async () => {
+    const [mail] = await setup().run({
+      type: 'item.reported',
+      reportId: 'r2',
+      itemId: 'i1',
+      reporterId: 'n1',
+      category: 'NUDEZ',
+      hidden: true,
+    });
+    expect(mail!.subject).toContain('Anúncio fora do ar por denúncias');
+    expect(mail!.text).toContain('saiu do ar sozinho');
+  });
+
+  it('anúncio removido com negociação: doador recebe o motivo e a ONG, o aviso de encerramento', async () => {
+    const mails = await setup().run({ type: 'item.removed', itemId: 'i1', reason: 'Foto imprópria', cancelledNgoId: 'n1' });
+    expect(mails.map((m) => m.to).sort()).toEqual([ngo.email, donor.email].sort());
+    const toDonor = mails.find((m) => m.to === donor.email)!;
+    expect(toDonor.subject).toContain('Anúncio removido');
+    expect(toDonor.text).toContain('Foto imprópria');
+    expect(toDonor.text).toContain('negociação em andamento foi cancelada');
+    const toNgo = mails.find((m) => m.to === ngo.email)!;
+    expect(toNgo.subject).toContain('Negociação encerrada');
+    expect(toNgo.text).not.toContain('Foto imprópria'); // o motivo é só para o doador
+  });
+
+  it('anúncio removido sem negociação: só o doador', async () => {
+    const mails = await setup().run({ type: 'item.removed', itemId: 'i1', reason: 'Spam', cancelledNgoId: null });
+    expect(mails.map((m) => m.to)).toEqual([donor.email]);
+    expect(mails[0]!.text).not.toContain('negociação');
+  });
+
   it('conta excluída usa o e-mail que veio no evento (o do banco já foi anonimizado)', async () => {
     const { run, repo } = setup();
     const [mail] = await run({ type: 'account.deleted', email: 'antigo@teste.dev', name: 'Marina' });

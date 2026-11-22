@@ -26,7 +26,7 @@ export interface ReportsDeps {
   reportsRepo: ReportsRepository;
   eventsRepo: Pick<ItemEventsRepository, 'listByItem' | 'insert'>;
   bus: Pick<RealtimeBus, 'publish'>;
-  /** Avisa os administradores de cada denúncia nova. */
+  /** E-mails: denúncias novas para os administradores; remoção de anúncio para o doador e a ONG da negociação. */
   notifier?: Notifier;
 }
 
@@ -85,7 +85,7 @@ export const createReportsService = ({ db, itemsRepo, reportsRepo, eventsRepo, b
     itemId: string,
     input: { category: ReportCategory; reason?: string },
   ): Promise<Report> {
-    return db.tx(async (tx) => {
+    const { report, hidden } = await db.tx(async (tx) => {
       const item = await itemsRepo.lockById(tx, itemId);
       if (!item || item.moderation_status === 'REMOVIDO') throw new AppError('ITEM_NOT_FOUND');
       if (user.id === item.donor_id) throw new AppError('FORBIDDEN', 'Você não pode denunciar o próprio anúncio.');
@@ -99,11 +99,15 @@ export const createReportsService = ({ db, itemsRepo, reportsRepo, eventsRepo, b
         category: input.category,
         reason: input.reason ?? null,
       });
+      // `hidden` só é true na denúncia que de fato tirou o anúncio do ar (as seguintes não mudam nada).
+      let hidden = false;
       if ((await reportsRepo.countOpenItemReporters(tx, itemId)) >= AUTO_HIDE_THRESHOLD) {
-        await itemsRepo.hideIfVisible(tx, itemId);
+        hidden = (await itemsRepo.hideIfVisible(tx, itemId)) !== null;
       }
-      return report;
+      return { report, hidden };
     });
+    notifier.notify({ type: 'item.reported', reportId: report.id, itemId, reporterId: user.id, category: input.category, hidden });
+    return report;
   },
 
   list(f: { status: ReportStatus; kind?: ReportKind; limit: number; offset: number }): Promise<Page<ReportSummary>> {
@@ -156,13 +160,14 @@ export const createReportsService = ({ db, itemsRepo, reportsRepo, eventsRepo, b
    * Idempotente: remover de novo não muda o motivo nem cancela nada.
    */
   async removeItem(admin: AuthUser, itemId: string, reason: string): Promise<ModerationResult> {
-    const result = await db.tx(async (tx) => {
+    const outcome = await db.tx(async (tx) => {
       const before = await itemsRepo.lockById(tx, itemId);
       if (!before) throw new AppError('ITEM_NOT_FOUND');
 
       let item = before;
       let cancelledNegotiation = false;
-      if (before.moderation_status !== 'REMOVIDO') {
+      const removedNow = before.moderation_status !== 'REMOVIDO';
+      if (removedNow) {
         item = (await itemsRepo.setModeration(tx, itemId, { status: 'REMOVIDO', reason, adminId: admin.id }))!;
         cancelledNegotiation = before.status === 'EM_PROGRESSO';
         if (cancelledNegotiation) {
@@ -179,9 +184,16 @@ export const createReportsService = ({ db, itemsRepo, reportsRepo, eventsRepo, b
         }
       }
       const resolvedReports = await reportsRepo.resolveOpenItemReports(tx, itemId, admin.id, 'ITEM_REMOVIDO');
-      return { item, cancelledNegotiation, resolvedReports };
+      return {
+        result: { item, cancelledNegotiation, resolvedReports },
+        removedNow,
+        cancelledNgoId: cancelledNegotiation ? before.selected_ngo_id : null,
+      };
     });
+    const { result, removedNow, cancelledNgoId } = outcome;
 
+    // Remover de novo não avisa de novo.
+    if (removedNow) notifier.notify({ type: 'item.removed', itemId, reason, cancelledNgoId });
     if (result.cancelledNegotiation) {
       bus.publish({
         type: 'item.status_changed',

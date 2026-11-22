@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { EmailMessage } from '../../src/core/email';
 import type { User } from '../../src/types';
 import { buildTestApp, closeTestApp, resetDb, type TestContext } from '../helpers/app';
-import { authHeader, createAdmin, createDonor, createItem, PASSWORD, pdfBuffer } from '../helpers/factories';
+import { authHeader, createAdmin, createDonor, createItem, createNgo, PASSWORD, pdfBuffer } from '../helpers/factories';
 import { multipart } from '../helpers/multipart';
 
 type Who = Pick<User, 'id' | 'role'>;
@@ -135,6 +135,43 @@ describe('Notificações por e-mail — jornada completa', () => {
     const done = await only('marina@teste.dev');
     expect(done.subject).toContain('Doação concluída');
     expect(done.text).toContain('Casa Esperança confirmou');
+  });
+
+  it('denúncias de anúncio avisam o administrador; a remoção avisa o doador e a ONG da negociação', async () => {
+    const donor = await createDonor(ctx.db, { name: 'Marina Souza', email: 'marina@teste.dev' });
+    const ngo = await createNgo(ctx.db, { name: 'Casa Esperança', email: 'casa@ong.dev' });
+    const item = await createItem(ctx.db, donor, { title: 'Casaco infantil' });
+    expect((await call('POST', `/items/${item.id}/interest`, ngo)).statusCode).toBe(201);
+    expect((await call('POST', `/items/${item.id}/select-ngo`, donor, { ngo_id: ngo.id })).statusCode).toBe(200);
+    await take();
+
+    // 1ª e 2ª denúncias: o anúncio continua no ar.
+    const first = await call('POST', `/items/${item.id}/report`, await createDonor(ctx.db), { category: 'GOLPE' });
+    expect(first.statusCode).toBe(201);
+    const reported = await only('ana@admin.dev');
+    expect(reported.subject).toContain('Anúncio denunciado: "Casaco infantil"');
+    expect(reported.text).toContain('Golpe ou fraude');
+    expect(reported.text).toContain(`/admin/reports/${first.json().id}`);
+    expect((await call('POST', `/items/${item.id}/report`, await createDonor(ctx.db), { category: 'GOLPE' })).statusCode).toBe(201);
+    expect((await only('ana@admin.dev')).subject).toContain('Anúncio denunciado');
+
+    // 3ª denúncia: o anúncio sai do ar e o assunto avisa.
+    expect((await call('POST', `/items/${item.id}/report`, await createDonor(ctx.db), { category: 'GOLPE' })).statusCode).toBe(201);
+    expect((await only('ana@admin.dev')).subject).toContain('Anúncio fora do ar por denúncias');
+
+    // Administrador remove: doador recebe o motivo; ONG, o aviso de que a negociação acabou.
+    const reason = 'O anúncio pede dinheiro pelo frete.';
+    expect((await call('POST', `/admin/items/${item.id}/remove`, admin, { reason })).statusCode).toBe(200);
+    const mails = await take();
+    expect(mails.map((m) => m.to).sort()).toEqual(['casa@ong.dev', 'marina@teste.dev']);
+    const toDonor = mails.find((m) => m.to === 'marina@teste.dev')!;
+    expect(toDonor.subject).toContain('Anúncio removido: "Casaco infantil"');
+    expect(toDonor.text).toContain(reason);
+    expect(mails.find((m) => m.to === 'casa@ong.dev')!.subject).toContain('Negociação encerrada');
+
+    // Remover de novo não repete os e-mails.
+    expect((await call('POST', `/admin/items/${item.id}/remove`, admin, { reason: 'Outro motivo qualquer.' })).statusCode).toBe(200);
+    expect(await take()).toEqual([]);
   });
 
   it('troca de senha no perfil gera aviso de segurança', async () => {
